@@ -1,0 +1,12 @@
+{
+  "display_name": "Character Stats / Character State",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "generate_interceptor": "characterStateGenerateInterceptor",
+  "js": "index.js",
+  "css": "style.css",
+  "author": "kdturtle",
+  "version": "3.1.3",
+  "description": "Persistent per-character stats, skills, inventory, effects, game clock, STATE_UPDATE protocol, user sheets, snapshots, stat history graphs and optional tool calling."
+}
