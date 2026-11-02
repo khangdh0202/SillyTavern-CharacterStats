@@ -24,6 +24,12 @@ function isUserEntity(candidate) {
     return Boolean(candidate && candidate.isUser === true);
 }
 
+/* Display label for the {{user}} entity: the active persona name. Keys,
+   storage and the AI protocol keep "{{user}}" / "USER" unchanged. */
+function userDisplayName() {
+    return applyCsMacros(USER_STATE_UI_NAME);
+}
+
 function makeUserEntity() {
     return {
         isUser: true,
@@ -915,7 +921,9 @@ function renderCharacterSelector(availableCharacters, selectedCharacter) {
         <select class="cs-character-selector" id="cs-character-selector">
             ${availableCharacters.map(character => {
                 const key = getStateEntityKey(character) || "";
-                const name = isUserEntity(character) || character?.csSideNpc ? (character?.name || "Character") : promptNameFor(character, handles);
+                const name = isUserEntity(character)
+                    ? userDisplayName()
+                    : character?.csSideNpc ? (character?.name || "Character") : promptNameFor(character, handles);
 
                 return `<option value="${escapeHtml(key)}" ${key === selectedKey ? "selected" : ""}>${escapeHtml(name)}</option>`;
             }).join("")}
@@ -12499,7 +12507,7 @@ function buildEventCardHtml(card) {
     return `
         <details class="cs-event-card"${settings.eventCardsExpanded ? " open" : ""}>
             <summary class="cs-event-card-header" title="${escapeHtml(csT("Show all changes"))}">
-                <span class="cs-event-card-name">${escapeHtml(card.entityName)}</span>
+                <span class="cs-event-card-name">${escapeHtml(card.entityKey === USER_STATE_KEY ? userDisplayName() : card.entityName)}</span>
                 <span class="cs-event-card-tag">${escapeHtml(eventCardCountsLabel(card))}</span>
                 ${preview}
                 <span class="cs-event-card-more">${hidden ? `+${hidden} ` : ""}${csIcon("chevron-down")}</span>
@@ -16721,7 +16729,7 @@ async function openCharacterSheet(mode = "view", targetCharacter = null) {
     }
 
     const isEditing = mode !== "view";
-    const characterName = character?.name || csT("Character");
+    const characterName = isUser ? userDisplayName() : (character?.name || csT("Character"));
     const sheetIcon = isUser ? "👤" : "♟";
 
     /* View mode: make sure every number stat has a baseline history point
