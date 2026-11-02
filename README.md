@@ -6,6 +6,8 @@
 
 [🌐 English](README.md) | [🇻🇳 Tiếng Việt](README.vi.md) · [📖 Full Documentation (EN)](USER_GUIDE.md) · [📖 Tài liệu đầy đủ (VI)](USER_GUIDE.vi.md)
 
+<img src="docs/screenshots/character-sheet.webp" alt="Character State sheet with stat bars and game clock" width="720">
+
 </div>
 
 ---
@@ -37,6 +39,10 @@ You play the story. The extension keeps the ledger.
 - **Snapshots & rollback** — automatic restore points; swipes and message deletions roll the world back with the story.
 - **Side NPCs, scenes, user sheet, relationships** — the whole cast and world get state, created on your explicit order only.
 - **AI sheet designer (optional)** — flip one switch and the AI can draft an entire character sheet for you, chat-scoped, with the card untouched until *you* decide to adopt it.
+
+<p align="center"><img src="docs/screenshots/change-card.webp" alt="Character State event card in chat" width="720"></p>
+
+<p align="center"><em>An event card in chat: every applied change shows up in the story flow.</em></p>
 
 ## Design principles
 
@@ -86,6 +92,16 @@ Clone or copy the repository into an extensions folder, then reload SillyTavern 
 - Let the AI draft it: enable *"ARM: let the AI design a sheet once"* in ⚙ Settings, ask the AI in chat, review the result, choose **⋯ ▸ Save this chat as the card defaults…** when happy (see the guide, section *AI Sheet Designer*).
 
 **Troubleshoot:** if the button doesn't appear — check the browser console (F12) for `Character State` messages, confirm `manifest.json` sits directly inside the extension folder (any folder name works), and confirm the extension is listed in the Extensions panel.
+
+## Part of a suite
+
+Works on its own, and also plugs into these companion extensions by the same author:
+
+| Extension | What it adds |
+|---|---|
+| [Storyline](https://github.com/khangdh0202/SillyTavern-Storyline) | Storyteller chat mode: you play the main character, the AI narrates the world |
+| [Dice Weaver](https://github.com/khangdh0202/SillyTavern-DiceWeaver) | Real d20 rolls the AI triggers |
+| [Memory Weaver](https://github.com/khangdh0202/SillyTavern-MemoryWeaver) | Long-term story memory |
 
 ## Documentation
 

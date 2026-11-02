@@ -6,6 +6,8 @@
 
 [🌐 English](README.md) | [🇻🇳 Tiếng Việt](README.vi.md) · [📖 Tài liệu đầy đủ (VI)](USER_GUIDE.vi.md) · [📖 Full Documentation (EN)](USER_GUIDE.md)
 
+<img src="docs/screenshots/character-sheet.webp" alt="Character State sheet with stat bars and game clock" width="720">
+
 </div>
 
 ---
@@ -37,6 +39,10 @@ Bạn chơi truyện. Extension lo phần sổ sách.
 - **Snapshot & rollback** — điểm khôi phục tự động; swipe/xoá tin nhắn thì cả thế giới quay lại theo truyện.
 - **Side NPC, scene, sheet cho user, quan hệ nhân vật** — cả dàn diễn viên và thế giới đều có trạng thái, và chỉ được tạo khi **bạn ra lệnh**.
 - **AI tự thiết kế sheet (tuỳ chọn)** — bật 1 công tắc, AI có thể soạn cả bộ sheet cho bạn, chỉ áp trong chat này, card không bị đụng tới cho đến khi **bạn** quyết định nhận.
+
+<p align="center"><img src="docs/screenshots/change-card.webp" alt="Character State event card in chat" width="720"></p>
+
+<p align="center"><em>Thẻ sự kiện trong chat: mọi thay đổi được áp dụng đều hiện ngay trong mạch truyện.</em></p>
 
 ## Triết lý thiết kế
 
@@ -86,6 +92,16 @@ Clone hoặc copy repo vào một trong hai thư mục extensions rồi reload S
 - Để AI soạn: bật *"ARM: let the AI design a sheet once"* trong ⚙ Settings, yêu cầu AI trong chat, xem kết quả, ưng thì chọn **⋯ ▸ Ghi chat này thành mặc định của card…** (xem guide, mục *AI Sheet Designer*).
 
 **Xử lý sự cố:** nút không hiện — xem console trình duyệt (F12) có log `Character State` không, kiểm tra `manifest.json` nằm ngay trong thư mục extension (tên thư mục nào cũng được), và kiểm tra extension có xuất hiện trong panel Extensions.
+
+## Thuộc một bộ extension
+
+Chạy độc lập được, và kết hợp được với các extension cùng tác giả:
+
+| Extension | Thêm gì |
+|---|---|
+| [Storyline](https://github.com/khangdh0202/SillyTavern-Storyline) | Chế độ chat người kể chuyện: bạn nhập vai nhân vật chính, AI kể cả thế giới |
+| [Dice Weaver](https://github.com/khangdh0202/SillyTavern-DiceWeaver) | Xúc xắc d20 thật do AI kích hoạt |
+| [Memory Weaver](https://github.com/khangdh0202/SillyTavern-MemoryWeaver) | Bộ nhớ truyện dài hạn |
 
 ## Tài liệu
 
