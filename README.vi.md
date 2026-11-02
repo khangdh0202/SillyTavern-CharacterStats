@@ -58,7 +58,7 @@ Bạn chơi truyện. Extension lo phần sổ sách.
 - 🧠 **Tiết kiệm token** — chế độ xem state gọn, tóm tắt lười cho group, đọc sâu theo yêu cầu. Sheet lớn vẫn rẻ.
 - 📱 **Gọn trên máy tính lẫn điện thoại** — sheet chia tab, header sáu nút, ô lọc chỉ số, chạm để xem chi tiết, toàn màn hình trên điện thoại, Esc để đóng, giao diện English / Tiếng Việt.
 - 🧭 **Tiện khi chơi** — chỉnh nhanh ±, ★ ghim chỉ số kèm HUD phía trên ô chat, tab quan hệ, hộp chỉnh đồng hồ thật (ngày/giờ, ngủ, tạm dừng, lịch), một màn Lịch sử, xuất/nhập cấu hình, và chế độ prompt *Tối đa* để AI hiểu nhiều nhất.
-- 🎛 **Theo ý bạn** — presets, component tái sử dụng, copy/paste từng field giữa các nhân vật, chế độ hiển thị custom, ẩn field khỏi prompt.
+- 🎛 **Theo ý bạn** — preset dựng sẵn cho 10 thể loại (fantasy, hệ thống, tu tiên, sinh tồn, tình cảm…), preset riêng, component tái sử dụng, copy/paste từng field giữa các nhân vật, chế độ hiển thị custom, ẩn field khỏi prompt.
 
 ## Tương thích
 

@@ -235,6 +235,7 @@ Mọi thay đổi được áp (state update, effect hết hạn, save editor, t
 ## 18. Presets, component & copy/paste field
 
 - **Presets**: lưu cả schema stat theo tên (lưu trong browser). Trùng tên = ghi đè có confirm.
+- **Preset dựng sẵn theo thể loại**: đầu cửa sổ **Preset chỉ số** (⋯ ▸ Presets…) có sẵn sheet cho 10 thể loại — Fantasy RPG, Hệ thống / LitRPG / Isekai, Tu tiên, Siêu anh hùng, Sinh tồn / Zombie, Kinh dị / Bí ẩn, Tình cảm / Đời thường, Học đường, Cyberpunk / Khoa học viễn tưởng, Kinh doanh / Quản lý. Mỗi thể loại có 3 biến thể: **Nhân vật chính / {{user}}** (đầy đủ), **Đồng hành** (lõi thể loại + Affection, Trust, Relationship, Mood) và **NPC phụ** (3 chỉ số, tiết kiệm token). Bấm một biến thể → chọn cách áp (thay thế, chỉ thêm còn thiếu, hoặc xoá rồi thay) → xong. Sheet trống cũng có nút *Bắt đầu từ preset theo thể loại*. Preset dựng sẵn chỉ đọc và đi kèm extension; muốn có bản riêng thì Load, chỉnh, rồi 💾 lưu tên mới. Chỉ số danh tính / tiến triển (Level, chỉ số gốc…) cho phép AI đặt thẳng Base, nên nhân vật mới có giá trị thật thay vì nằm ở Mod.
 - **Component 🧩**: lưu *một phần* định nghĩa để tái sử dụng; apply CHỈ thêm stat còn thiếu — không bao giờ đè định nghĩa hiện có.
 - **Field copy/paste**: copy định nghĩa (+ giá trị) của một stat sang nhiều nhân vật trong chat cùng lúc — có tuỳ chọn cập nhật cả card defaults (chỉ định nghĩa). Giá trị lệch định nghĩa được giữ + cảnh báo, không bịa.
 

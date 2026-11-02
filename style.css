@@ -2037,3 +2037,28 @@ details.cs-event-card[open] .cs-event-card-more i { transform: rotate(180deg); }
     .cs-stat-name-label { display: inline-block; min-height: 28px; line-height: 28px; }
     .cs-stat-value, .cs-stat-value-text { min-height: 32px; }
 }
+
+/* ===== v3.2 built-in genre presets (Stat Presets) ===== */
+.cs-builtin-presets { margin: 4px 0 12px; }
+.cs-builtin-presets > summary { cursor: pointer; font-weight: 600; padding: 6px 2px; color: var(--cs-text); }
+.cs-builtin-presets-hint { font-weight: 400; font-size: 12px; color: var(--cs-muted); margin-left: 6px; }
+.cs-builtin-preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 8px; }
+.cs-builtin-preset {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--cs-border);
+    border-radius: 12px;
+    background: var(--cs-soft-2);
+}
+.cs-builtin-preset-head { display: flex; align-items: center; gap: 8px; color: var(--cs-text); }
+.cs-builtin-preset-icon { font-size: 20px; line-height: 1; }
+.cs-builtin-preset-desc { color: var(--cs-muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.cs-builtin-preset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.cs-builtin-presets-mine { font-weight: 600; padding: 6px 2px; color: var(--cs-text); border-top: 1px solid var(--cs-border); margin-top: 4px; }
+@media (max-width: 480px) {
+    .cs-builtin-preset-grid { grid-template-columns: 1fr; }
+    .cs-builtin-preset-actions .cs-chip { min-height: 32px; }
+}
