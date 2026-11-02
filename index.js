@@ -15943,10 +15943,36 @@ globalThis.__csBuiltinPresetsForTests = {
     build: (genreId, variantId) => buildBuiltinPresetSchema(genreId, variantId),
     load: (character, genreId, variantId, mode = "replace") =>
         pasteCharacterSchema(character, mode, JSON.stringify(buildBuiltinPresetSchema(genreId, variantId))),
-    sectionHtml: () => builtinPresetSectionHtml()
+    sectionHtml: open => builtinPresetSectionHtml(open),
+    readOpen: count => readBuiltinPresetsOpen(count),
+    writeOpen: open => writeBuiltinPresetsOpen(open)
 };
 
-function builtinPresetSectionHtml() {
+/* The built-in section remembers being folded (per browser, like the
+   presets themselves). Never chosen yet: open while the user has no
+   presets of their own, folded once they do. */
+const BUILTIN_PRESETS_OPEN_KEY = "character-state:builtin-presets-open:v1";
+
+function readBuiltinPresetsOpen(ownPresetCount) {
+    try {
+        const stored = globalThis.localStorage?.getItem(BUILTIN_PRESETS_OPEN_KEY);
+        if (stored === "1") return true;
+        if (stored === "0") return false;
+    } catch {
+        /* storage blocked — fall back to the default */
+    }
+    return ownPresetCount === 0;
+}
+
+function writeBuiltinPresetsOpen(open) {
+    try {
+        globalThis.localStorage?.setItem(BUILTIN_PRESETS_OPEN_KEY, open ? "1" : "0");
+    } catch {
+        /* storage blocked — the choice lasts until the window closes */
+    }
+}
+
+function builtinPresetSectionHtml(open = true) {
     const cards = getBuiltinPresetGenres().map(genre => `
         <div class="cs-builtin-preset">
             <div class="cs-builtin-preset-head">
@@ -15963,7 +15989,7 @@ function builtinPresetSectionHtml() {
         </div>`).join("");
 
     return `
-        <details class="cs-builtin-presets" open>
+        <details class="cs-builtin-presets"${open ? " open" : ""}>
             <summary>${csH("Built-in by genre")} <span class="cs-builtin-presets-hint">${csH("read-only · Load, adjust, then 💾 Save as your own")}</span></summary>
             <div class="cs-builtin-preset-grid">${cards}</div>
         </details>
@@ -16806,11 +16832,16 @@ async function openPresetManager(character) {
 
     const refresh = () => {
         const presets = presetStoreRead();
-        /* keep the built-in section's open / closed state across refreshes */
-        const builtinOpen = body.querySelector?.(".cs-builtin-presets")?.open ?? true;
-        body.innerHTML = builtinPresetSectionHtml() + presetRowsHtml(presets);
-        const builtinSection = body.querySelector?.(".cs-builtin-presets");
-        if (builtinSection) builtinSection.open = builtinOpen;
+        const builtinOpen = readBuiltinPresetsOpen(presets.length);
+        body.innerHTML = builtinPresetSectionHtml(builtinOpen) + presetRowsHtml(presets);
+        /* a <details> rendered open fires "toggle" once by itself — only
+           store a real change */
+        let shownOpen = builtinOpen;
+        body.querySelector?.(".cs-builtin-presets")?.addEventListener("toggle", event => {
+            if (event.target.open === shownOpen) return;
+            shownOpen = event.target.open;
+            writeBuiltinPresetsOpen(shownOpen);
+        });
 
         const typedName = String(nameInput?.value || "").trim();
         const existing = findPresetByName(presets, typedName);
