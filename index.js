@@ -890,15 +890,28 @@ function getSelectedSheetCharacter(availableCharacters = getAvailableSheetCharac
 
     const active = resolveActiveCharacter();
     const activeKey = getStateEntityKey(active);
-    if (activeKey) {
-        const activeCharacter = availableCharacters.find(character =>
-            getStateEntityKey(character) === activeKey
-        );
+    const activeCharacter = activeKey
+        ? availableCharacters.find(character => getStateEntityKey(character) === activeKey)
+        : null;
 
-        if (activeCharacter) return activeCharacter;
+    /* The active card's sheet is empty (e.g. a host card that only stores
+       the chat, like a Storyline host) while another entity in this chat has
+       a filled sheet: open that one instead of a blank "no stats yet" page.
+       {{user}} first, then the first filled entity. Data-driven only. */
+    if (!activeCharacter || !hasFilledSheet(activeCharacter)) {
+        const filled = availableCharacters.find(character => isUserEntity(character) && hasFilledSheet(character))
+            || availableCharacters.find(hasFilledSheet);
+
+        if (filled) return filled;
     }
 
-    return availableCharacters[0];
+    return activeCharacter || availableCharacters[0];
+}
+
+function hasFilledSheet(characterOrUser) {
+    const key = getStateEntityKey(characterOrUser);
+    const runtime = key ? SillyTavern.getContext()?.chatMetadata?.character_states?.[key] : null;
+    return !isStaleEmptyRuntime(runtime);
 }
 
 function setSelectedSheetCharacter(character) {
