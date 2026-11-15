@@ -7127,13 +7127,7 @@ function computeStatePatch(state, update, opts = {}) {
                 if (!operation || typeof operation !== "object") continue;
 
                 if (operation.add === true) {
-                    addInventoryItem(state, {
-                        name,
-                        quantity: operation.quantity ?? 1,
-                        description: String(operation.description ?? ""),
-                        equippable: Boolean(operation.equippable),
-                        equipped: Boolean(operation.equipped)
-                    });
+                    addInventoryItem(state, { ...operation, name });
                     continue;
                 }
 
@@ -7169,13 +7163,7 @@ function computeStatePatch(state, update, opts = {}) {
                     }
 
                     if (value && typeof value === "object") {
-                        addInventoryItem(state, {
-                            name: String(value.name ?? name),
-                            quantity: value.quantity ?? 1,
-                            description: String(value.description ?? ""),
-                            equippable: Boolean(value.equippable),
-                            equipped: Boolean(value.equipped)
-                        });
+                        addInventoryItem(state, { ...value, name: String(value.name ?? name) });
                     }
                 }
             }
@@ -7601,12 +7589,14 @@ function normalizeInventoryItem(item) {
     const name = String(item.name ?? "").trim();
     if (!name) return null;
 
-    let quantity = Number(item.quantity ?? 1);
+    let quantity = Number(item.quantity ?? item.qty ?? item.count ?? 1);
     if (!Number.isFinite(quantity)) quantity = 1;
 
     quantity = Math.max(0, Math.floor(quantity));
 
-    const equippable = Boolean(item.equippable);
+    /* v3.2.2: "equipped": true alone means the item can be equipped */
+    const equippable = item.equippable === true ||
+        (item.equippable === undefined && item.equipped === true);
 
     return {
         name,
@@ -7726,8 +7716,9 @@ function updateInventoryItem(state, item) {
         current.description = item.description;
     }
 
-    if (typeof item.quantity !== "undefined") {
-        let quantity = Number(item.quantity);
+    const quantityValue = item.quantity ?? item.qty ?? item.count;
+    if (typeof quantityValue !== "undefined") {
+        let quantity = Number(quantityValue);
         if (Number.isFinite(quantity)) {
             current.quantity = Math.max(
                 0,
@@ -7742,6 +7733,7 @@ function updateInventoryItem(state, item) {
     }
 
     if (typeof item.equipped === "boolean") {
+        if (item.equipped && item.equippable === undefined) current.equippable = true;
         current.equipped = current.equippable && item.equipped;
     }
 
@@ -11352,6 +11344,7 @@ function renderCharacterStateBlock(character, state, isCurrentCharacter, skipSta
             "INVENTORY EXAMPLES:",
             '<STATE_UPDATE>{"character":"Bruno","inventory":{"add":[{"name":"Potion","quantity":1,"description":"Healing potion.","equippable":false,"equipped":false}]}}</STATE_UPDATE>',
             '<STATE_UPDATE>{"character":"Bruno","inventory":{"update":[{"name":"Potion","quantity":2}]}}</STATE_UPDATE>',
+            '<STATE_UPDATE>{"character":"Bruno","inventory":{"add":[{"name":"Leather Jacket","quantity":1,"description":"Warm, worn at the elbows.","equippable":true,"equipped":true}],"update":[{"name":"Iron Sword","equipped":false}]}}</STATE_UPDATE>',
             '<STATE_UPDATE>{"character":"Bruno","inventory":{"remove":[{"name":"Potion","quantity":2}]}}</STATE_UPDATE>',
             '<STATE_UPDATE>{"character":"Bruno","inventory":{"remove":["Potion"]}}</STATE_UPDATE>',
             "",
@@ -25055,12 +25048,16 @@ function registerCharacterStateTool() {
                     },
                     inventory: {
                         type: "object",
-                        description: "Operations: {add|update|remove: [...], set: [...], clear: true}.",
+                        description: "Operations: {add|update|remove: [...], set: [...], clear: true}. " +
+                            "Item fields: name, quantity, description (short: what it is / does), equippable (true for anything worn or wielded — clothes, armor, weapons, tools held in hand, bags), equipped (true while worn or held). " +
+                            "Picking up and putting on in the same moment: add with equippable AND equipped true, e.g. {\"add\":[{\"name\":\"Leather Jacket\",\"quantity\":1,\"description\":\"Warm, worn at the elbows.\",\"equippable\":true,\"equipped\":true}]}. " +
+                            "Equip / unequip an item already carried: {\"update\":[{\"name\":\"<exact item name>\",\"equipped\":true}]} (false to take it off). " +
+                            "remove: [\"name\"] drops the whole item, [{\"name\":\"...\",\"quantity\":2}] drops that many.",
                         additionalProperties: true
                     },
                     json: {
                         type: "string",
-                        description: "Alternative to the fields above: the whole change as ONE JSON object string, e.g. {\"stats\":{\"HP\":-5},\"inventory\":{\"add\":[{\"name\":\"Rope\",\"qty\":1}]}}. Use it when the object fields do not come through."
+                        description: "Alternative to the fields above: the whole change as ONE JSON object string, e.g. {\"stats\":{\"HP\":-5},\"inventory\":{\"add\":[{\"name\":\"Rope\",\"quantity\":1}]}}. Use it when the object fields do not come through."
                     }
                 },
                 required: ["character"]
@@ -25082,7 +25079,7 @@ function registerCharacterStateTool() {
                 if (!SEMANTIC_CHANGE_FIELDS.some(field => carriesChange(update[field]))) {
                     return "ERROR EMPTY_REQUEST: this call carried NO change — only \"character\" arrived, so NOTHING was updated. " +
                         "Call state_update again with the whole change as ONE JSON string in \"json\", e.g. " +
-                        "{\"character\":\"USER\",\"json\":\"{\\\"stats\\\":{\\\"HP\\\":-5},\\\"inventory\\\":{\\\"add\\\":[{\\\"name\\\":\\\"Rope\\\",\\\"qty\\\":1}]}}\"}, " +
+                        "{\"character\":\"USER\",\"json\":\"{\\\"stats\\\":{\\\"HP\\\":-5},\\\"inventory\\\":{\\\"add\\\":[{\\\"name\\\":\\\"Rope\\\",\\\"quantity\\\":1}]}}\"}, " +
                         "or write a <STATE_UPDATE>{\"character\":\"USER\",...}</STATE_UPDATE> block in your reply text.";
                 }
 
