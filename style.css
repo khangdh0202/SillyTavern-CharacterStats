@@ -2069,3 +2069,16 @@ details.cs-event-card[open] .cs-event-card-more i { transform: rotate(180deg); }
     .cs-builtin-preset-grid { grid-template-columns: 1fr; }
     .cs-builtin-preset-actions .cs-chip { min-height: 32px; }
 }
+
+/* v3.2.3: custom editor grows with its content */
+.cs-custom-editor {
+    min-height: 320px;
+    max-height: 75vh;
+    field-sizing: content;
+    overflow: auto;
+}
+.cs-custom-json-editor {
+    font-size: 12px;
+    white-space: pre;
+    tab-size: 2;
+}

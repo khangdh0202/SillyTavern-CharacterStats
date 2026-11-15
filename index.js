@@ -11755,7 +11755,20 @@ function getEffectiveCustomData(state) {
 
 function renderCustomViewHtml(state, isEditing, mode, entityKey = null) {
     if (isEditing) {
-        return `<textarea id="cs-edit-custom" class="cs-custom-editor" placeholder="${csH("Free text: trackers, relationships, rules...")}">${escapeHtml(state.customText || renderLegacyCustom(state.custom))}</textarea>`;
+        /* v3.2.3: the structured custom data lives apart from the rules
+           text once the text holds no JSON of its own — edit it in its own
+           JSON box, otherwise those fields could not be edited at all. */
+        const text = typeof state.customText === "string" ? state.customText : "";
+        const hasObject = state.custom && typeof state.custom === "object" && Object.keys(state.custom).length > 0;
+        if (!text.trim() || extractEmbeddedJsonRoot(text) || !hasObject) {
+            return `<textarea id="cs-edit-custom" class="cs-custom-editor" placeholder="${csH("Free text: trackers, relationships, rules...")}">${escapeHtml(text || renderLegacyCustom(state.custom))}</textarea>`;
+        }
+        return `
+            <div class="cs-custom-data-label">${csH("Rules / notes (free text)")}</div>
+            <textarea id="cs-edit-custom" class="cs-custom-editor" placeholder="${csH("Free text: trackers, relationships, rules...")}">${escapeHtml(text)}</textarea>
+            <div class="cs-custom-data-label">${csH("Custom data (JSON) — the fields the AI tracks")}</div>
+            <textarea id="cs-edit-custom-json" class="cs-custom-editor cs-custom-json-editor" spellcheck="false">${escapeHtml(JSON.stringify(state.custom, null, 2))}</textarea>
+        `;
     }
 
     const hasCustomObject = state.custom && typeof state.custom === "object" && Object.keys(state.custom).length;
@@ -21322,7 +21335,39 @@ function readEditorFormIntoState(overlay, state) {
     state.customText =
         overlay.querySelector("#cs-edit-custom")?.value || "";
 
+    const jsonArea = overlay.querySelector("#cs-edit-custom-json");
+    if (jsonArea) {
+        const source = jsonArea.value.trim();
+        let parsed = {};
+        if (source) {
+            try {
+                parsed = JSON.parse(source);
+            } catch (error) {
+                csToast.error(csT("Custom data JSON is invalid — fix it before saving. Nothing was changed.") + ` (${error.message})`);
+                return false;
+            }
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            csToast.error("Custom data must be a JSON object { ... }. Nothing was changed.");
+            return false;
+        }
+        state.custom = parsed;
+    }
+
     return true;
+}
+
+globalThis.__csCustomEditorForTests = {
+    render: (state, isEditing = true) => renderCustomViewHtml(state, isEditing, "full"),
+    read: (overlay, state) => readEditorFormIntoState(overlay, state),
+    adopt: (overlay, state) => adoptEditorCustomText(overlay, state)
+};
+
+/* The separate JSON box is authoritative for custom data; the rules text
+   only replaces it when the user pasted a JSON block into the text. */
+function adoptEditorCustomText(overlay, state) {
+    if (overlay?.querySelector?.("#cs-edit-custom-json") && !extractEmbeddedJsonRoot(state.customText)) return false;
+    return adoptCustomTextAsCustomObject(state);
 }
 
 async function saveCharacterSheetEditor(overlay) {
@@ -21346,7 +21391,7 @@ async function saveCharacterSheetEditor(overlay) {
     /* The Custom text area is authoritative for the custom defaults too:
        adopt its embedded JSON into the structured custom object so a
        Reset really restores the values the user just typed. */
-    adoptCustomTextAsCustomObject(state);
+    adoptEditorCustomText(overlay, state);
 
     /* =========================
        SAVE STARTING STATE
@@ -21447,7 +21492,7 @@ async function saveRuntimeChatEditor(overlay) {
 
     /* A pasted JSON block in the Custom text area becomes the structured
        custom object again (AI updates will merge on top of it). */
-    adoptCustomTextAsCustomObject(state);
+    adoptEditorCustomText(overlay, state);
 
     context.chatMetadata.character_states[key] = normalizeRuntimeState(state);
 
@@ -22671,7 +22716,11 @@ const CS_VI = {
     "Cyberpunk / Sci-fi": "Cyberpunk / Khoa học viễn tưởng",
     "Humanity vs cyberware, netrunning, credits, heat and street cred.": "Nhân tính và cấy ghép, hack mạng, tiền, độ bị truy lùng và uy tín đường phố.",
     "Business / Management": "Kinh doanh / Quản lý",
-    "Cash flow, reputation, staff, market share, contracts and rivals.": "Dòng tiền, danh tiếng, nhân sự, thị phần, hợp đồng và đối thủ."
+    "Cash flow, reputation, staff, market share, contracts and rivals.": "Dòng tiền, danh tiếng, nhân sự, thị phần, hợp đồng và đối thủ.",
+    "Rules / notes (free text)": "Luật / ghi chú (văn bản tự do)",
+    "Custom data (JSON) — the fields the AI tracks": "Dữ liệu custom (JSON) — các trường AI theo dõi",
+    "Custom data JSON is invalid — fix it before saving. Nothing was changed.": "JSON dữ liệu custom bị lỗi — sửa lại rồi mới lưu. Chưa có gì thay đổi.",
+    "Custom data must be a JSON object { ... }. Nothing was changed.": "Dữ liệu custom phải là một object JSON { ... }. Chưa có gì thay đổi."
 };
 
 function getCsLanguage() {
