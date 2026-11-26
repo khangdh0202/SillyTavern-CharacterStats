@@ -9201,7 +9201,7 @@ function stripHallucinatedEventTagBlocks(text) {
  */
 const SELF_WRITTEN_EVENT_MARKER_REGEX = /^\[CS_?EVENT\b(?::\s*#?(\d+))?[^\]]*\]?/i;
 
-function stripSelfWrittenEventMarkers(text, message) {
+function stripSelfWrittenEventMarkers(text, message, { feedback = true } = {}) {
     const source = String(text ?? "");
     if (!/\[CS_?EVENT/i.test(source)) return source;
 
@@ -9227,12 +9227,125 @@ function stripSelfWrittenEventMarkers(text, message) {
 
     if (!stripped) return source;
 
-    queueFeedbackNotice(
+    if (feedback) queueFeedbackNotice(
         "Your reply began with a [CSEVENT:...] line. That marker is SYSTEM-GENERATED from applied updates — never write it yourself. The line was removed and NOTHING it listed was applied. " +
         "If those changes really happened, apply them NOW with the state_update tool (or a <STATE_UPDATE> block) — state only changes through those."
     );
 
     return lines.join("\n").replace(/^\n+/, "");
+}
+
+/*
+ * v3.2.5: the model never sees the "[CSEVENT:#n ...]" lines at the top of
+ * earlier replies — they were the example weaker models copied (#63).
+ * Only the PROMPT copy is changed: ST hands the interceptor per-message
+ * copies ({...chatItem, mes}); each touched entry is REPLACED by a new
+ * object, so chat[] / message.mes (needed to render the cards) never
+ * change. Only the leading marker block of assistant messages goes;
+ * markers quoted inside the story stay.
+ */
+const LEADING_EVENT_MARKER_REGEX = /^\s*\[CS_?EVENT/i;
+
+function hideEventMarkersInPromptText(text, reasoningSettings = null) {
+    const source = String(text ?? "");
+    if (!/\[CS_?EVENT/i.test(source)) return source;
+
+    if (LEADING_EVENT_MARKER_REGEX.test(source)) {
+        return stripSelfWrittenEventMarkers(source, null, { feedback: false });
+    }
+
+    /* "Add reasoning to prompts": ST puts prefix + reasoning + suffix +
+       separator IN FRONT of the message text — the marker block then
+       starts right after the first suffix + separator. */
+    const prefix = String(reasoningSettings?.prefix ?? "");
+    const suffix = String(reasoningSettings?.suffix ?? "") + String(reasoningSettings?.separator ?? "");
+    if (!reasoningSettings?.add_to_prompts || !prefix.trim() || !suffix.trim()) return source;
+    if (!source.startsWith(prefix)) return source;
+
+    const at = source.indexOf(suffix, prefix.length);
+    if (at < 0) return source;
+
+    const head = source.slice(0, at + suffix.length);
+    const body = source.slice(head.length);
+    if (!LEADING_EVENT_MARKER_REGEX.test(body)) return source;
+
+    return head + stripSelfWrittenEventMarkers(body, null, { feedback: false });
+}
+
+function hideEventMarkersFromPromptChat(chat, type) {
+    if (!Array.isArray(chat) || !chat.length) return 0;
+
+    let reasoningSettings = null;
+    try {
+        reasoningSettings = SillyTavern.getContext()?.powerUserSettings?.reasoning ?? null;
+    } catch {
+        reasoningSettings = null;
+    }
+
+    /* continue: ST rebuilds the continued message from ITS PROMPT TEXT
+       (continue_mag + new text) — hiding its markers would delete the
+       real ones from the saved message. */
+    const last = type === "continue" ? chat.length - 1 : chat.length;
+    let hidden = 0;
+
+    for (let i = 0; i < last; i++) {
+        const item = chat[i];
+        if (!item || typeof item !== "object" || item.is_user || item.is_system) continue;
+        if (typeof item.mes !== "string") continue;
+
+        const mes = hideEventMarkersInPromptText(item.mes, reasoningSettings);
+        if (mes === item.mes) continue;
+
+        chat[i] = { ...item, mes };
+        hidden++;
+    }
+
+    return hidden;
+}
+
+/*
+ * v3.2.5: fake marker lines a model wrote BEFORE v3.2.4 are still saved in
+ * old chats. When such a message renders, a leading marker line without a
+ * stored card (extra.csEvents[n]) is removed the same way as a fresh one —
+ * without feedback (old data, not this turn). The caller saves.
+ */
+function cleanStoredSelfWrittenMarkers(context, messageId) {
+    const message = context?.chat?.[messageId];
+    if (!message || message.is_user || message.is_system) return false;
+
+    const mes = message.mes;
+    if (typeof mes !== "string" || !LEADING_EVENT_MARKER_REGEX.test(mes)) return false;
+    /* legacy <CS_EVENT> messages have their own transform */
+    if (mes.includes("<CS_EVENT>")) return false;
+
+    const cleaned = stripSelfWrittenEventMarkers(mes, message, { feedback: false });
+    if (cleaned === mes) return false;
+
+    message.mes = cleaned;
+
+    const swipeId = Number(message.swipe_id ?? 0);
+    if (Array.isArray(message.swipes) && message.swipes[swipeId] === mes) {
+        message.swipes[swipeId] = cleaned;
+    }
+
+    if (typeof context.updateMessageBlock === "function") {
+        try {
+            context.updateMessageBlock(messageId, message);
+        } catch (error) {
+            console.warn("[Character State] Fake marker cleanup re-render failed:", error);
+        }
+    }
+
+    return true;
+}
+
+function saveChatAfterMarkerCleanup(context) {
+    try {
+        if (typeof context?.saveChatDebounced === "function") context.saveChatDebounced();
+        else void context?.saveChat?.();
+    } catch (error) {
+        console.warn("[Character State] Fake marker cleanup save failed:", error);
+    }
 }
 
 /*
@@ -11198,8 +11311,8 @@ function renderCharacterStateBlock(character, state, isCurrentCharacter, skipSta
                 "Persistent state changes may affect ANY character in the group.",
                 "",
                 "EVENT MARKERS ARE SYSTEM-GENERATED:",
-                "[CSEVENT:...] markers, <CSEVENT> and <CS_EVENT> tags are appended to your messages by the SYSTEM after each applied update — they are NOT part of your protocol.",
-                "A self-written <CSEVENT>/<CS_EVENT> block is discarded unread and does NOT change any state.",
+                "[CSEVENT:...] markers, <CSEVENT> and <CS_EVENT> tags are SYSTEM-GENERATED from applied updates and are removed from the chat history you see — they are NOT part of your protocol. Never write one yourself.",
+                "A self-written [CSEVENT:...] line or <CSEVENT>/<CS_EVENT> block is discarded unread and does NOT change any state.",
                 "State changes happen ONLY through the state tools (or a <STATE_UPDATE> block when tools are unavailable).",
                 "PREFER the state tools. The fallback <STATE_UPDATE> block payload is ONE raw JSON object between the tags — NO inner tags (<character>…</character>, <stats>…</stats>), and NEVER write tool calls as text tags (<state_advance_time minutes=\"44\"> attribute style is discarded). Advance game time only through the state_advance_time tool.",
                 "Each turn, update EVERY entity whose state changed — including {{user}} (\"character\": \"{{user}}\" or \"USER\") — not only the speaker; one call per entity.",
@@ -11260,8 +11373,8 @@ function renderCharacterStateBlock(character, state, isCurrentCharacter, skipSta
                 "When a persistent state changes, append exactly ONE <STATE_UPDATE> block after the normal response.",
                 "",
                 "EVENT MARKERS ARE SYSTEM-GENERATED:",
-                "[CSEVENT:...] markers, <CSEVENT> and <CS_EVENT> tags are appended to your messages by the SYSTEM after each applied update — they are NOT part of your protocol.",
-                "A self-written <CSEVENT>/<CS_EVENT> block is discarded unread and does NOT change any state.",
+                "[CSEVENT:...] markers, <CSEVENT> and <CS_EVENT> tags are SYSTEM-GENERATED from applied updates and are removed from the chat history you see — they are NOT part of your protocol. Never write one yourself.",
+                "A self-written [CSEVENT:...] line or <CSEVENT>/<CS_EVENT> block is discarded unread and does NOT change any state.",
                 "State changes happen ONLY through ONE <STATE_UPDATE> block.",
                 "",
                 "The STATE_UPDATE MUST specify the target character.",
@@ -12865,12 +12978,24 @@ function resweepAllEventCards() {
     const ids = rendered.length ? rendered : chat.map((_, index) => index);
 
     let touched = 0;
+    let cleaned = false;
+    const context = SillyTavern.getContext();
 
     for (const messageId of ids) {
+        /* v3.2.5: fake marker lines saved by an older version (O(1) for
+           messages that do not start with a marker) */
+        try {
+            if (cleanStoredSelfWrittenMarkers(context, messageId)) cleaned = true;
+        } catch (error) {
+            console.warn("[Character State] Fake marker cleanup failed for message", messageId, error);
+        }
+
         /* v3 B15: one bad message must not abort the whole sweep. */
         if (!messageMayCarryEventCard(chat[messageId])) continue;
         if (applyEventCardsSafely(messageId)) touched += 1;
     }
+
+    if (cleaned) saveChatAfterMarkerCleanup(context);
 
     return touched;
 }
@@ -13441,6 +13566,13 @@ async function injectCharacterStatePrompt(chat) {
  * Register this name in manifest.json -> generate_interceptor.
  */
 globalThis.characterStateGenerateInterceptor = async function(chat, contextSize, abort, type) {
+    /* v3.2.5: prompt copy only — chat[] keeps its markers (cards render) */
+    try {
+        hideEventMarkersFromPromptChat(chat, type);
+    } catch (error) {
+        console.warn("[Character State] Hiding event markers from the prompt failed:", error);
+    }
+
     /* Quiet/background generations (summarize, vector storage, other
        extensions) must not consume the one-shot APPLIED / PROTOCOL buffer —
        that block belongs to the NEXT REAL reply, and a quiet call used to
@@ -25773,6 +25905,14 @@ if (messageRenderEvent) {
     });
 
     eventSource.on(messageRenderEvent, messageId => {
+        /* v3.2.5: fake marker lines saved by an older version */
+        const context = SillyTavern.getContext();
+        try {
+            if (cleanStoredSelfWrittenMarkers(context, messageId)) saveChatAfterMarkerCleanup(context);
+        } catch (error) {
+            console.warn("[Character State] Fake marker cleanup failed:", error);
+        }
+
         /* New-style inline markers (message.extra.csEvents) first, then
            legacy <CS_EVENT> system messages from older chats. */
         applyEventCardsInDom(messageId);
