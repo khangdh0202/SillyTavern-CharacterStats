@@ -167,7 +167,7 @@ Bạn không cần nhớ chi tiết để chơi — nhưng biết giúp bạn d�
 | `state_advance_time` | Kéo đồng hồ game theo phút, hoặc sleep / travel / skip; không bao giờ lùi, đứng yên khi tạm dừng |
 | `state_relationships` | Liệt kê, thêm/sửa hoặc xoá quan hệ giữa các đối tượng |
 
-Tool cổ điển `UpdateCharacterState` (mỗi call một đối tượng) cũng được đăng ký.
+Tool cũ `UpdateCharacterState` (mỗi call một đối tượng) mặc định không còn đưa cho model nữa, vì `state_update` làm được mọi việc của nó. Lệnh gọi bằng tên cũ (từ chat cũ hoặc viết dạng chữ) vẫn chạy. Muốn đưa lại thì đặt **Bộ tool** thành **Đầy đủ** trong Settings.
 
 ## 10. Side NPC
 
@@ -269,6 +269,8 @@ Stat number có sparkline trên sheet; click mở chart lớn (lưới, nhãn tr
 | --- | --- | --- |
 | Ngôn ngữ giao diện | English | Tự động (theo SillyTavern) / English / Tiếng Việt |
 | **Mức chi tiết của prompt** | Chuẩn | **Tối đa** cho model thấy tới 40.000 ký tự custom data (Chuẩn: 8.000) và luôn gửi đầy đủ mọi thành viên nhóm — lựa chọn để AI hiểu nhiều nhất khi không ngại token đầu vào |
+| **Bộ tool** | Gọn | **Gọn**: không đưa tool cũ `UpdateCharacterState` (đã được `state_update` bao trọn), mỗi request bớt một tool. **Đầy đủ**: đưa mọi tool như trước bản 3.4.0 |
+| **Đèn sức khoẻ model** | BẬT | Một chấm trên nút Character Sheet: xanh khi model tuân giao thức cập nhật, vàng khi vài lượt trong 20 lượt gần nhất có lỗi, đỏ khi model liên tục làm sai (marker `[CSEVENT]` giả, viết tool call thành chữ, JSON hỏng, khối cập nhật bị cắt, sai tên chỉ số hoặc tên nhân vật). Khi chuyển sang đỏ sẽ có một thông báo. Bấm vào chấm để xem tên model, số lần từng loại lỗi, gợi ý, và nút **Đối chiếu lại sheet**: điền sẵn một yêu cầu vào ô chat để bạn đọc lại rồi tự gửi. Lượt không đổi chỉ số không tính là lỗi |
 | **Bố cục prompt** | Tách | **Tách**: luật và định nghĩa chỉ số nằm đầu prompt, không đổi giữa các lượt (nhà cung cấp cache được), còn giá trị hiện tại (chỉ số, kỹ năng, túi đồ, hiệu ứng, custom data, giờ game) gửi thành một khối nhỏ ở cuối hội thoại. Không bỏ bớt nội dung nào. **Cổ điển**: gửi tất cả thành một khối ở đầu như trước bản 3.3.0. Chat nhóm luôn dùng Cổ điển |
 | Hiện chỉ số đã ghim phía trên ô chat | ON | HUD (chỉ hiện khi có chỉ số được ghim) |
 | Heuristic parser | OFF | Fallback dò câu đơn giản ("take 12 damage") khi model quên protocol (dễ false positive) |

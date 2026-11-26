@@ -167,7 +167,7 @@ You don't need to memorize any of this to play — but knowing it helps you writ
 | `state_advance_time` | Advance the game clock by minutes, or by sleep / travel / skip; never backwards, frozen while paused |
 | `state_relationships` | List, add/update or remove relationship edges between entities |
 
-The classic `UpdateCharacterState` tool (one call per entity) is registered as well.
+The older `UpdateCharacterState` tool (one call per entity) is no longer offered to the model by default, because `state_update` does everything it does. Calls to the old name (from older chats or a text fallback) still work. Set **Tool set** to **Full** in Settings to offer it again.
 
 ## 10. Side NPCs
 
@@ -270,6 +270,8 @@ Number stats get a sparkline on the sheet; clicking it opens a larger chart (gri
 | Interface language | English | Auto (follows SillyTavern) / English / Tiếng Việt |
 | **Prompt detail** | Standard | **Maximum** shows the model up to 40,000 characters of custom data (Standard: 8,000) and always sends every group member in full — the smartest option when input tokens are not a concern |
 | **Prompt layout** | Split | **Split** keeps the rules and stat definitions at the start of the prompt, unchanged between turns (providers can cache them), and sends the current values (stats, skills, inventory, effects, custom data, game time) as a small block at the end of the chat. Nothing is left out. **Classic** sends everything as one block at the start, as before 3.3.0. Group chats always use Classic |
+| **Tool set** | Lean | **Lean** does not offer the older `UpdateCharacterState` tool, which `state_update` fully covers, so every request carries one tool fewer. **Full** offers every tool, as before 3.4.0 |
+| **Model health light** | ON | A dot on the Character Sheet button: green when the model follows the state protocol, yellow when a few of the last 20 turns had problems, red when it keeps breaking it (fake `[CSEVENT]` markers, tool calls written as text, broken JSON, cut-off updates, unknown stats or names). You get one warning when it turns red. Click the dot for the model name, the problem counts, a hint, and **Reconcile sheet**, which puts a ready-made request into the chat input for you to review and send yourself. Turns without any change are not counted as problems |
 | Show pinned stats above the chat input | ON | The HUD (only appears when something is pinned) |
 | Heuristic parser | OFF | Local fallback that parses simple damage/gain sentences when the model forgets the protocol (risk of false positives) |
 | Record stat history | ON | Data for sparklines and charts |

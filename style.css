@@ -2082,3 +2082,21 @@ details.cs-event-card[open] .cs-event-card-more i { transform: rotate(180deg); }
     white-space: pre;
     tab-size: 2;
 }
+
+/* ---- v3.4.0: model health light ---- */
+.cs-health-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    cursor: pointer;
+    box-shadow: 0 0 0 2px var(--black30a, rgba(0, 0, 0, 0.3));
+}
+.cs-health-dot.cs-health-ok { background: #22c55e; }
+.cs-health-dot.cs-health-warn { background: #eab308; }
+.cs-health-dot.cs-health-bad { background: #ef4444; animation: cs-health-pulse 1.6s ease-in-out infinite; }
+.cs-health-dot.cs-health-none { background: var(--SmartThemeBorderColor, #888); }
+.cs-health-status { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+@keyframes cs-health-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .cs-health-dot.cs-health-bad { animation: none; } }

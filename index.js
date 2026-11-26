@@ -2325,6 +2325,7 @@ async function processUserStateCreateBlock(text) {
 
         if (!repaired) {
             if (truncated) {
+                recordProtocolProblem("truncated");
                 queueFeedbackNotice(
                     "Your <USER_STATE_CREATE> block was cut off before the closing tag and could not be parsed. " +
                     "Resend the complete block (watch the output token limit)."
@@ -2333,7 +2334,7 @@ async function processUserStateCreateBlock(text) {
             }
 
             console.warn("[Character State] Invalid USER_STATE_CREATE JSON:", error);
-            queueFeedbackNotice("Your <USER_STATE_CREATE> block was rejected: the JSON could not be parsed.");
+            queueFeedbackNotice("Your <USER_STATE_CREATE> block was rejected: the JSON could not be parsed.", "bad_json");
             return stripped;
         }
 
@@ -2343,7 +2344,7 @@ async function processUserStateCreateBlock(text) {
 
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
         console.warn("[Character State] USER_STATE_CREATE payload is not a JSON object; ignored.");
-        queueFeedbackNotice("Your <USER_STATE_CREATE> block was rejected: the payload must be a JSON object.");
+        queueFeedbackNotice("Your <USER_STATE_CREATE> block was rejected: the payload must be a JSON object.", "bad_json");
         return stripped;
     }
 
@@ -2515,7 +2516,7 @@ async function processSideNpcCreateBlock(text) {
         payload = JSON.parse(match[1]);
     } catch (error) {
         console.warn("[Character State] Invalid SIDE_NPC_CREATE JSON:", error);
-        queueFeedbackNotice("Your <SIDE_NPC_CREATE> block was rejected: the JSON could not be parsed.");
+        queueFeedbackNotice("Your <SIDE_NPC_CREATE> block was rejected: the JSON could not be parsed.", "bad_json");
         return strip();
     }
 
@@ -2770,6 +2771,7 @@ async function createSideNpcCore(context, name, rawStatsPayload) {
         }
 
         if (rejected.length) {
+            recordProtocolProblem("unknown_key");
             queueFeedbackNotice(`SIDE_NPC_CREATE "${name}": these stat keys were ignored (not in this chat's schema, or the value does not fit the stat's type): ${rejected.slice(0, 5).join(", ")}${rejected.length > 5 ? " …" : ""}. Use keys from the sheet's STATS section.`);
         }
     }
@@ -3050,7 +3052,7 @@ async function processSheetCreateBlock(text) {
         payload = JSON.parse(match[1]);
     } catch (error) {
         console.warn("[Character State] Invalid SHEET_CREATE JSON:", error);
-        queueFeedbackNotice("Your <SHEET_CREATE> block was rejected: the JSON could not be parsed.");
+        queueFeedbackNotice("Your <SHEET_CREATE> block was rejected: the JSON could not be parsed.", "bad_json");
         return strip();
     }
 
@@ -3058,7 +3060,7 @@ async function processSheetCreateBlock(text) {
     const character = resolveStateUpdateCharacter(targetName);
 
     if (!character) {
-        queueFeedbackNotice(`Your <SHEET_CREATE> block was rejected: target "${targetName || "(none)"}" does not match any character in this chat.`);
+        queueFeedbackNotice(`Your <SHEET_CREATE> block was rejected: target "${targetName || "(none)"}" does not match any character in this chat.`, "unknown_target");
         return strip();
     }
 
@@ -3108,7 +3110,7 @@ async function processSideNpcDeleteBlock(text) {
         payload = JSON.parse(match[1]);
     } catch (error) {
         console.warn("[Character State] Invalid SIDE_NPC_DELETE JSON:", error);
-        queueFeedbackNotice("Your <SIDE_NPC_DELETE> block was rejected: the JSON could not be parsed.");
+        queueFeedbackNotice("Your <SIDE_NPC_DELETE> block was rejected: the JSON could not be parsed.", "bad_json");
         return strip();
     }
 
@@ -3281,7 +3283,7 @@ async function processSceneCreateBlock(text) {
         payload = JSON.parse(match[1]);
     } catch (error) {
         console.warn("[Character State] Invalid SCENE_CREATE JSON:", error);
-        queueFeedbackNotice("Your <SCENE_CREATE> block was rejected: the JSON could not be parsed.");
+        queueFeedbackNotice("Your <SCENE_CREATE> block was rejected: the JSON could not be parsed.", "bad_json");
         return strip();
     }
 
@@ -3375,7 +3377,7 @@ async function processSceneSwitchBlock(text) {
         payload = JSON.parse(match[1]);
     } catch (error) {
         console.warn("[Character State] Invalid SCENE_SWITCH JSON:", error);
-        queueFeedbackNotice("Your <SCENE_SWITCH> block was rejected: the JSON could not be parsed.");
+        queueFeedbackNotice("Your <SCENE_SWITCH> block was rejected: the JSON could not be parsed.", "bad_json");
         return strip();
     }
 
@@ -7335,7 +7337,7 @@ async function applyStateUpdate(update, character = null) {
             console.warn(
                 "[Character State] STATE_UPDATE ignored: User State has not been created yet in this chat. Create it first with a <USER_STATE_CREATE> block."
             );
-            queueFeedbackNotice("Your STATE_UPDATE targeted USER, but no User State exists in this chat yet. Create it first with <USER_STATE_CREATE>.");
+            queueFeedbackNotice("Your STATE_UPDATE targeted USER, but no User State exists in this chat yet. Create it first with <USER_STATE_CREATE>.", "unknown_target");
             return null;
         }
 
@@ -7423,6 +7425,9 @@ async function applyStateUpdate(update, character = null) {
     for (const line of result.feedback) {
         queueFeedbackNotice(line);
     }
+
+    /* v3.4.0 health: a stat name that is not on the sheet */
+    if (result.errorCodes.some(error => error?.code === "UNKNOWN_STAT")) recordProtocolProblem("unknown_key");
 
     /* B5 self-healing: structured repair data accompanies the human
        feedback so the model can fix its request next turn. */
@@ -8039,8 +8044,13 @@ function clearTurnScopedMemory() {
     messagePreHistory.clear();
     sharedEntityClones.clear();
     lastReplyThisGeneration = null;
+    resetTurnHealth();
+    lastHealthTurnToken = null;
 }
 
+/* v3.4.0: the health record of a turn is not part of the APPLIED buffer —
+   a reset of that buffer (start of MESSAGE_RECEIVED) must not lose the
+   problems native tool calls recorded during the generation. */
 function resetPendingAppliedParts() {
     pendingAppliedParts = [];
     pendingAppliedInjected = false;
@@ -9069,8 +9079,11 @@ function queueStateLogResult(text) {
 }
 
 /* Protocol-feedback notices: shown to the model exactly once after a
-   rejected/invalid block so it can correct itself next turn. */
-function queueFeedbackNotice(text) {
+   rejected/invalid block so it can correct itself next turn.
+   v3.4.0: `problem` (a HEALTH_PROBLEM_CODES entry) also counts the turn in
+   the model health light — recordProtocolProblem. */
+function queueFeedbackNotice(text, problem = null) {
+    if (problem) recordProtocolProblem(problem);
     const trimmed = String(text || "").trim();
     if (!trimmed) return;
 
@@ -9078,6 +9091,344 @@ function queueFeedbackNotice(text) {
         kind: "feedback",
         text: trimmed
     });
+}
+
+/* =========================================================
+   v3.4.0: MODEL HEALTH — is the model following the state protocol?
+   Every protocol mistake of the current turn goes through ONE function,
+   recordProtocolProblem. At the end of the turn the counts are stored on
+   the reply itself (message.extra.csHealth: { t: turn token, a: changes
+   applied, p: { code: count } }) — a swipe or a deleted message takes its
+   record with it, and every chat has its own. The light reads the newest
+   HEALTH_WINDOW_TURNS records. A turn without any change is NOT a problem
+   (quiet scenes exist); it is only shown as information.
+========================================================= */
+const HEALTH_WINDOW_TURNS = 20;
+const HEALTH_WARN_TURNS = 2;
+const HEALTH_BAD_TURNS = 5;
+const HEALTH_BAD_STREAK = 3;
+const HEALTH_SCAN_MESSAGES = 400;
+const HEALTH_RECONCILE_MESSAGES = 10;
+const HEALTH_PROBLEM_CODES = ["fake_marker", "event_tag", "text_tool", "bad_json", "bad_format", "truncated", "unknown_key", "unknown_target", "empty_call", "other"];
+
+let turnHealth = { applied: 0, problems: {} };
+let lastHealthTurnToken = null;
+
+function resetTurnHealth() {
+    turnHealth = { applied: 0, problems: {} };
+}
+
+function recordProtocolProblem(code) {
+    const key = HEALTH_PROBLEM_CODES.includes(code) ? code : "other";
+    turnHealth.problems[key] = (turnHealth.problems[key] || 0) + 1;
+}
+
+function noteTurnHealthApplied() {
+    turnHealth.applied += 1;
+}
+
+function isModelHealthEnabled() {
+    return getExtensionSettings().modelHealth !== false;
+}
+
+function readHealthRecord(message) {
+    const record = message?.extra?.csHealth;
+    if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+    const problems = record.p && typeof record.p === "object" && !Array.isArray(record.p) ? record.p : {};
+    return { t: String(record.t ?? ""), a: Math.max(0, Number(record.a) || 0), p: problems };
+}
+
+function newHealthTurnToken() {
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/* End of a turn (finishTurn): the counts go onto the reply. A continue adds
+   to the record of the message it continued; the reply after a tool round
+   shares the turn token of the text that came with the calls (one turn). */
+function commitTurnHealth(context, message, { isContinue = false, isSameTurn = false } = {}) {
+    const counts = turnHealth;
+    resetTurnHealth();
+    if (!message || typeof message !== "object" || !isModelHealthEnabled()) return null;
+
+    const before = computeModelHealth(context).status;
+    const existing = isContinue ? readHealthRecord(message) : null;
+    const problems = { ...(existing?.p || {}) };
+
+    for (const [code, count] of Object.entries(counts.problems)) {
+        problems[code] = (Number(problems[code]) || 0) + count;
+    }
+
+    const token = existing?.t || (isSameTurn && lastHealthTurnToken) || newHealthTurnToken();
+    const record = { t: token, a: (existing?.a || 0) + counts.applied, p: problems };
+
+    if (!message.extra || typeof message.extra !== "object") message.extra = {};
+    message.extra.csHealth = record;
+
+    /* ST copies extra into swipe_info only on some paths (not on swipe left) */
+    const swipeInfo = Array.isArray(message.swipe_info) ? message.swipe_info[Number(message.swipe_id ?? 0)] : null;
+    if (swipeInfo && typeof swipeInfo === "object") {
+        if (!swipeInfo.extra || typeof swipeInfo.extra !== "object") swipeInfo.extra = {};
+        swipeInfo.extra.csHealth = { ...record, p: { ...problems } };
+    }
+
+    lastHealthTurnToken = token;
+
+    const after = computeModelHealth(context);
+    if (after.status === "bad" && before !== "bad") {
+        csToast.warning(
+            csT("The model is not following the state protocol: {n} of the last {m} turns had problems. Click the dot on the Character Sheet button for details.", { n: after.problemTurns, m: after.turns }),
+            "Character State"
+        );
+    }
+
+    return record;
+}
+
+/* Newest turns first (records sharing a token are one turn). */
+function computeModelHealth(context = SillyTavern.getContext()) {
+    const chat = Array.isArray(context?.chat) ? context.chat : [];
+    const turns = [];
+    const byToken = new Map();
+    const stop = Math.max(0, chat.length - HEALTH_SCAN_MESSAGES);
+
+    for (let i = chat.length - 1; i >= stop; i--) {
+        const message = chat[i];
+        if (!message || message.is_user || message.is_system) continue;
+
+        const record = readHealthRecord(message);
+        if (!record) continue;
+
+        let turn = record.t ? byToken.get(record.t) : null;
+
+        if (!turn) {
+            if (turns.length >= HEALTH_WINDOW_TURNS) break;
+            turn = { applied: 0, problems: {} };
+            turns.push(turn);
+            if (record.t) byToken.set(record.t, turn);
+        }
+
+        turn.applied += record.a;
+
+        for (const [code, count] of Object.entries(record.p)) {
+            const n = Number(count) || 0;
+            if (n > 0) turn.problems[code] = (turn.problems[code] || 0) + n;
+        }
+    }
+
+    const counts = {};
+    let problemTurns = 0;
+    let streak = 0;
+    let run = 0;
+    let quietTurns = 0;
+    let quietOpen = true;
+
+    for (const turn of turns) {
+        const codes = Object.keys(turn.problems);
+
+        if (codes.length) {
+            problemTurns += 1;
+            run += 1;
+            streak = Math.max(streak, run);
+        } else {
+            run = 0;
+        }
+
+        for (const code of codes) counts[code] = (counts[code] || 0) + turn.problems[code];
+
+        if (quietOpen && turn.applied === 0) quietTurns += 1;
+        else quietOpen = false;
+    }
+
+    const status = !turns.length
+        ? "none"
+        : problemTurns >= HEALTH_BAD_TURNS || streak >= HEALTH_BAD_STREAK
+            ? "bad"
+            : problemTurns >= HEALTH_WARN_TURNS ? "warn" : "ok";
+
+    return { status, turns: turns.length, problemTurns, streak, counts, quietTurns };
+}
+
+const HEALTH_STATUS_LABELS = {
+    ok: "Model health: OK — the model follows the state protocol",
+    warn: "Model health: some protocol problems in recent turns",
+    bad: "Model health: the model keeps breaking the state protocol"
+};
+
+const HEALTH_PROBLEM_INFO = {
+    fake_marker: {
+        label: "Wrote a [CSEVENT] marker instead of calling a tool",
+        hint: "This model copies the change markers instead of calling the tools, so nothing is applied. Consider switching to a model that handles tool calling better."
+    },
+    event_tag: {
+        label: "Wrote a <CSEVENT> block itself",
+        hint: "This model imitates the change cards instead of updating the state. Consider switching to a model that handles tool calling better."
+    },
+    text_tool: {
+        label: "Wrote a tool call as text in the reply",
+        hint: "The model writes tool calls into the story text. Check that function calling is enabled for this model, or switch model."
+    },
+    bad_json: {
+        label: "Sent JSON that could not be read",
+        hint: "The model sends broken JSON. A stronger model or a lower temperature usually helps."
+    },
+    bad_format: {
+        label: "Used a wrong update format",
+        hint: "The model does not use the update format it was taught. A stronger model usually helps."
+    },
+    truncated: {
+        label: "Update cut off before the end",
+        hint: "Replies are cut off before the update is complete. Raise the response length (max tokens)."
+    },
+    unknown_key: {
+        label: "Used a stat name that is not on the sheet",
+        hint: "The model guesses stat names. The Reconcile button below asks it to compare the story with the sheet."
+    },
+    unknown_target: {
+        label: "Targeted a character that does not exist",
+        hint: "The model uses names that are not in this chat. Check the character names on the sheet."
+    },
+    empty_call: {
+        label: "Called the update tool without any change",
+        hint: "The provider may drop the tool arguments. Try another provider for this model."
+    },
+    other: {
+        label: "Other protocol problem",
+        hint: "The model made protocol mistakes. Consider a stronger model."
+    }
+};
+
+function readCurrentModelName(context) {
+    try {
+        const name = context?.mainApi === "openai" && typeof context.getChatCompletionModel === "function"
+            ? context.getChatCompletionModel()
+            : context?.onlineStatus;
+        const text = String(name ?? "").trim();
+        return text && text !== "no_connection" ? text : "";
+    } catch {
+        return "";
+    }
+}
+
+function refreshModelHealthIndicator() {
+    if (typeof document?.getElementById !== "function") return;
+
+    const button = document.getElementById("character-state-button");
+    let dot = document.getElementById("cs-health-dot");
+    const context = SillyTavern.getContext();
+    const health = isModelHealthEnabled() && context?.chatMetadata ? computeModelHealth(context) : null;
+
+    if (!button || !health || health.status === "none") {
+        dot?.remove();
+        return;
+    }
+
+    if (!dot) {
+        dot = document.createElement("span");
+        dot.id = "cs-health-dot";
+        dot.setAttribute?.("role", "button");
+        dot.setAttribute?.("tabindex", "0");
+        const open = event => {
+            event?.stopPropagation?.();
+            event?.preventDefault?.();
+            openModelHealthPanel();
+        };
+        dot.addEventListener("click", open);
+        dot.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") open(event);
+        });
+        button.appendChild(dot);
+    }
+
+    dot.className = `cs-health-dot cs-health-${health.status}`;
+    dot.dataset.csHealth = health.status;
+    dot.title = csT(HEALTH_STATUS_LABELS[health.status]);
+}
+
+function buildReconcileRequestText() {
+    return csT("(OOC: Please check and reconcile the character sheet. Re-read the last {n} messages and compare them with the current sheet: STATS, CUSTOM data and inventory. List every mismatch you find, then make ONE update (tool call or <STATE_UPDATE> block) that corrects all of them, keeping STATS and CUSTOM consistent.)", { n: HEALTH_RECONCILE_MESSAGES });
+}
+
+/* Fills the chat input — never sends. Text already there is kept: the
+   request is only added after it when the user agrees. */
+async function fillReconcileRequest() {
+    const textarea = document.getElementById?.("send_textarea");
+    if (!textarea) {
+        csToast.error("The chat input was not found.");
+        return false;
+    }
+
+    const request = buildReconcileRequestText();
+    const current = String(textarea.value ?? "");
+
+    if (current.trim()) {
+        if (!await csConfirm("The chat input already has text. Add the reconcile request after it?", { okLabel: "Add" })) return false;
+        textarea.value = `${current.replace(/\s+$/, "")}\n\n${request}`;
+    } else {
+        textarea.value = request;
+    }
+
+    try {
+        if (typeof Event === "function") textarea.dispatchEvent?.(new Event("input", { bubbles: true }));
+    } catch {
+        /* resize only */
+    }
+    textarea.focus?.();
+    return true;
+}
+
+function openModelHealthPanel() {
+    document.getElementById("cs-health-overlay")?.remove();
+
+    const context = SillyTavern.getContext();
+    const health = computeModelHealth(context);
+    const model = readCurrentModelName(context);
+    const ranked = Object.entries(health.counts).sort((a, b) => b[1] - a[1]);
+    const top = ranked.length ? (HEALTH_PROBLEM_INFO[ranked[0][0]] || HEALTH_PROBLEM_INFO.other) : null;
+    const statusLabel = health.status === "none"
+        ? csT("No turns recorded yet in this chat.")
+        : csT(HEALTH_STATUS_LABELS[health.status]);
+
+    const rows = ranked.map(([code, count]) => `
+        <div class="cs-token-sub-row">
+            <span>${csH((HEALTH_PROBLEM_INFO[code] || HEALTH_PROBLEM_INFO.other).label)}</span>
+            <span>×${formatNumber(count)}</span>
+        </div>`).join("");
+
+    const overlay = document.createElement("div");
+    overlay.id = "cs-health-overlay";
+    overlay.className = "cs-log-overlay";
+    overlay.innerHTML = `
+        <div class="cs-log-window" style="width:min(520px,94vw);">
+            <div class="cs-log-header">
+                <div class="cs-log-title">${csIcon("heart-pulse")} ${escapeHtml(csT("Model health"))}</div>
+                <div class="cs-log-subtitle">${csH("Protocol problems in the last {m} turns of this chat", { m: health.turns })}</div>
+            </div>
+            <div class="cs-log-body" style="padding:12px 16px;">
+                <div class="cs-health-status"><span class="cs-health-dot cs-health-${health.status}"></span> ${escapeHtml(statusLabel)}</div>
+                ${model ? `<div class="cs-settings-hint">${csH("Model: {model}", { model })}</div>` : ""}
+                ${health.turns ? `<div class="cs-settings-hint">${csH("{n} of {m} turns had problems", { n: health.problemTurns, m: health.turns })}</div>` : ""}
+                ${rows ? `<div class="cs-token-sub">${rows}</div>` : ""}
+                ${top ? `<div class="cs-settings-hint">${csH(top.hint)}</div>` : ""}
+                ${health.quietTurns ? `<div class="cs-settings-hint">${csH("{n} recent turns without any state change (information only — quiet scenes are normal).", { n: health.quietTurns })}</div>` : ""}
+            </div>
+            <div class="cs-log-footer">
+                <button class="cs-chip cs-chip-accent" id="cs-health-reconcile-btn" type="button" title="${csH("Puts a request into the chat input — you review it and send it yourself")}">${csIcon("scale-balanced")} ${csH("Reconcile sheet")}</button>
+                <button class="cs-chip cs-chip-soft" id="cs-health-close-btn" type="button">${csH("Close")}</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    overlay.querySelector("#cs-health-close-btn")?.addEventListener("click", () => overlay.remove());
+    overlay.querySelector("#cs-health-reconcile-btn")?.addEventListener("click", async () => {
+        if (await fillReconcileRequest()) overlay.remove();
+    });
+    overlay.addEventListener("click", event => {
+        if (event.target === overlay) overlay.remove();
+    });
+
+    return overlay;
 }
 
 const STATE_LOG_OPEN_REGEX = /<STATE_LOG\b([^>]*?)\/?>/i;
@@ -9202,6 +9553,7 @@ function stripHallucinatedEventTagBlocks(text) {
 
     if (stripped) {
         working = working.replace(/\s+$/, "");
+        recordProtocolProblem("event_tag");
         queueFeedbackNotice(
             "Your message contained a <CSEVENT> or <CS_EVENT> block. That tag is SYSTEM-GENERATED — never write it yourself. The block was discarded and NOT applied. " +
             "Send state changes ONLY via <STATE_UPDATE> (or the state tools). If values existed only inside the discarded block, resend them in a <STATE_UPDATE>."
@@ -9247,6 +9599,7 @@ function stripSelfWrittenEventMarkers(text, message, { feedback = true } = {}) {
 
     if (!stripped) return source;
 
+    if (feedback) recordProtocolProblem("fake_marker");
     if (feedback) queueFeedbackNotice(
         "Your reply began with a [CSEVENT:...] line. That marker is SYSTEM-GENERATED from applied updates — never write it yourself. The line was removed and NOTHING it listed was applied. " +
         "If those changes really happened, apply them NOW with the state_update tool (or a <STATE_UPDATE> block) — state only changes through those."
@@ -9458,6 +9811,9 @@ function pushAuditEntry(context, entry) {
         f: String(entry.f ?? ""),
         op: entry.op || "set"
     };
+
+    /* v3.4.0: changes the model made this turn (health info) */
+    if (normalized.src === "ai") noteTurnHealthApplied();
 
     if (entry.b !== undefined) normalized.b = entry.b;
     if (entry.a !== undefined) normalized.a = entry.a;
@@ -10132,6 +10488,7 @@ async function processTextToolCalls(context, messageId, text) {
         .map(entry => `${entry?.name}|${canonicalToolParams(entry?.parameters)}`));
 
     const notes = [];
+    let wroteToolAsText = false;
 
     for (const invoke of csInvokes) {
         const key = `${invoke.name}|${canonicalToolParams(invoke.params)}`;
@@ -10139,6 +10496,12 @@ async function processTextToolCalls(context, messageId, text) {
         if (nativeKeys.has(key)) {
             notes.push(`${invoke.name}: skipped (already ran natively)`);
             continue;
+        }
+
+        /* v3.4.0 health: once per message */
+        if (!wroteToolAsText) {
+            wroteToolAsText = true;
+            recordProtocolProblem("text_tool");
         }
 
         if (CS_TEXT_TOOL_READ_ONLY.has(invoke.name)) {
@@ -10476,7 +10839,7 @@ function consumeAdvanceTimeTags(context, source, messageId) {
     }
 
     cleaned = cleaned.trim();
-    queueFeedbackNotice("state_advance_time is a TOOL, not a text tag — the tag was executed this time; call the tool through the tool interface instead.");
+    queueFeedbackNotice("state_advance_time is a TOOL, not a text tag — the tag was executed this time; call the tool through the tool interface instead.", "text_tool");
 
     return { text: cleaned, clockDirty };
 }
@@ -10723,6 +11086,8 @@ async function handleMessageReceivedCore(messageId, type) {
                 }
             }
             persistLastTurnJournal(context);
+            /* v3.4.0: this turn's protocol record goes onto the reply */
+            commitTurnHealth(context, message, { isContinue, isSameTurn });
 
             if (maybeAutoSnapshot(context)) clockDirty = true;
             if (clockDirty) await saveChatState(context);
@@ -10846,6 +11211,7 @@ async function handleMessageReceivedCore(messageId, type) {
                     message.mes = cleanedText.slice(0, truncated.blockStart).trim();
 
                     console.warn(`[Character State] Recovered a truncated <STATE_UPDATE> block (closing tag missing; ${repaired ? `JSON repaired, tail trimmed: ${repaired.trimmed}` : "inner-tag XML translated"}).`);
+                    recordProtocolProblem("truncated");
                     queueFeedbackNotice(
                         `Your <STATE_UPDATE> block was cut off before the closing tag (likely the output token limit). ` +
                         noticeTail
@@ -10857,6 +11223,7 @@ async function handleMessageReceivedCore(messageId, type) {
                     return;
                 }
 
+                recordProtocolProblem("truncated");
                 queueFeedbackNotice(
                     "Your <STATE_UPDATE> block was cut off before the closing tag and could not be parsed. " +
                     "Resend the complete block (watch the output token limit)."
@@ -10896,7 +11263,7 @@ async function handleMessageReceivedCore(messageId, type) {
 
             if (!translated) {
                 console.error("[Character State] Invalid STATE_UPDATE:", error);
-                queueFeedbackNotice("Your last <STATE_UPDATE> block was rejected: the JSON could not be parsed. Check quotes, commas and brackets.");
+                queueFeedbackNotice("Your last <STATE_UPDATE> block was rejected: the JSON could not be parsed. Check quotes, commas and brackets.", "bad_json");
 
                 /* v3.1 C3: blocks that ALREADY ran (<TIME>, <tool_calls>,
                    NPC/scene/sheet blocks) leave the message now — kept in
@@ -10910,7 +11277,7 @@ async function handleMessageReceivedCore(messageId, type) {
 
             payload = translated;
             console.warn("[Character State] STATE_UPDATE payload used inner-tag XML style — translated to the canonical format.");
-            queueFeedbackNotice("Your <STATE_UPDATE> body must be ONE raw JSON object — inner tags (<character>/<stats>) are NOT the protocol. It was translated and applied this time; use the plain JSON format next turn.");
+            queueFeedbackNotice("Your <STATE_UPDATE> body must be ONE raw JSON object — inner tags (<character>/<stats>) are NOT the protocol. It was translated and applied this time; use the plain JSON format next turn.", "bad_format");
         }
 
         /* GAME CLOCK inside STATE_UPDATE payload: same validation. */
@@ -10965,12 +11332,12 @@ async function handleMessageReceivedCore(messageId, type) {
         if (leftoverCut >= 0) {
             message.mes = message.mes.slice(0, leftoverCut).trim();
             console.warn("[Character State] A trailing <STATE_UPDATE> block was cut off and ignored (first block already applied).");
-            queueFeedbackNotice("A second <STATE_UPDATE> block was cut off before its closing tag and was ignored — send one complete block per turn.");
+            queueFeedbackNotice("A second <STATE_UPDATE> block was cut off before its closing tag and was ignored — send one complete block per turn.", "truncated");
         }
 
         if (extraStateBlocks > 0) {
             console.warn(`[Character State] ${extraStateBlocks} extra <STATE_UPDATE> block(s) in one message were ignored (first block applied).`);
-            queueFeedbackNotice(`${extraStateBlocks} extra <STATE_UPDATE> block(s) in one message were ignored — send one block per turn; only the first was applied.`);
+            queueFeedbackNotice(`${extraStateBlocks} extra <STATE_UPDATE> block(s) in one message were ignored — send one block per turn; only the first was applied.`, "bad_format");
         }
 
         /* Auto-events: evaluate again after this message's own updates. */
@@ -11041,7 +11408,7 @@ function resolveStateUpdateTargets(payload, speaker) {
                 console.warn(
                     "[Character State] STATE_UPDATE entry is missing target character; entry skipped."
                 );
-                queueFeedbackNotice("One STATE_UPDATE \"updates\" entry had no \"character\" name; it was skipped.");
+                queueFeedbackNotice("One STATE_UPDATE \"updates\" entry had no \"character\" name; it was skipped.", "unknown_target");
                 continue;
             }
 
@@ -11051,7 +11418,7 @@ function resolveStateUpdateTargets(payload, speaker) {
                 console.warn(
                     `[Character State] STATE_UPDATE target not found: ${targetName}; entry skipped, no state was changed.`
                 );
-                queueFeedbackNotice(`STATE_UPDATE target "${targetName}" does not match any character in this chat; entry skipped.${ambiguousNameHint(targetName)}`);
+                queueFeedbackNotice(`STATE_UPDATE target "${targetName}" does not match any character in this chat; entry skipped.${ambiguousNameHint(targetName)}`, "unknown_target");
                 continue;
             }
 
@@ -11073,7 +11440,7 @@ function resolveStateUpdateTargets(payload, speaker) {
             console.warn(
                 `[Character State] STATE_UPDATE target not found: ${targetName}; update rejected, no state was changed.`
             );
-            queueFeedbackNotice(`STATE_UPDATE target "${targetName}" does not match any character in this chat; the whole update was rejected.${ambiguousNameHint(targetName)}`);
+            queueFeedbackNotice(`STATE_UPDATE target "${targetName}" does not match any character in this chat; the whole update was rejected.${ambiguousNameHint(targetName)}`, "unknown_target");
             return [];
         }
 
@@ -19520,6 +19887,8 @@ function getHudEntities(context) {
 function refreshCsHud() {
     if (typeof document?.getElementById !== "function") return;
 
+    refreshModelHealthIndicator();
+
     const sendForm = document.getElementById("send_form");
     const existing = document.getElementById("cs-hud");
     const context = SillyTavern.getContext();
@@ -19569,7 +19938,12 @@ globalThis.__csFeaturesForTests = {
     getPinnedStatNames: (...args) => getPinnedStatNames(...args),
     buildConfigExport: (...args) => buildConfigExport(...args),
     importConfigFromText: (...args) => importConfigFromText(...args),
-    refreshCsHud: () => refreshCsHud()
+    refreshCsHud: () => refreshCsHud(),
+    /* v3.4.0 */
+    computeModelHealth: (...args) => computeModelHealth(...args),
+    openModelHealthPanel: () => openModelHealthPanel(),
+    fillReconcileRequest: () => fillReconcileRequest(),
+    buildReconcileRequestText: () => buildReconcileRequestText()
 };
 
 /* Delegated quick-edit / pin handling for a view-mode sheet. */
@@ -22592,6 +22966,47 @@ const CS_VI = {
     "Split keeps the rules and stat definitions at the start of the prompt, unchanged between turns (providers can cache them), and sends the current values as a small block at the end of the chat. Nothing is left out. Group chats always use Classic.": "Tách: luật và định nghĩa chỉ số nằm đầu prompt, không đổi giữa các lượt (nhà cung cấp cache được), còn giá trị hiện tại gửi thành một khối nhỏ ở cuối hội thoại. Không bỏ bớt nội dung nào. Chat nhóm luôn dùng Cổ điển.",
     "Split layout: stable {stable} tok at the start of the prompt (cacheable) · live {live} tok at the end of the chat": "Bố cục tách: phần ổn định {stable} tok ở đầu prompt (cache được) · phần sống {live} tok ở cuối hội thoại",
     "Maximum shows the model up to 40,000 characters of custom data (Standard: 8,000) and always sends every group member in full. Best when input tokens are not a concern.": "Tối đa cho model thấy tới 40.000 ký tự custom data (Chuẩn: 8.000) và luôn gửi đầy đủ mọi thành viên trong nhóm. Hợp khi không ngại token đầu vào.",
+    "Tool set": "Bộ tool",
+    "Lean (no duplicate tools)": "Gọn (bỏ tool trùng)",
+    "Full (every tool, as before 3.4.0)": "Đầy đủ (mọi tool, như trước 3.4.0)",
+    "Lean does not offer the old UpdateCharacterState tool: state_update does everything it does, and one tool fewer saves input tokens on every request. Calls to the old name still work.": "Gọn: không đưa tool cũ UpdateCharacterState cho model nữa — state_update làm được mọi việc của nó, bớt một tool là bớt token đầu vào ở mỗi request. Lệnh gọi bằng tên cũ vẫn chạy.",
+    "Model health light": "Đèn sức khoẻ model",
+    "A dot on the Character Sheet button turns yellow or red when the model keeps breaking the state protocol (fake markers, tool calls written as text, broken JSON…). Click it for details and a Reconcile button.": "Một chấm trên nút Character Sheet chuyển vàng hoặc đỏ khi model liên tục làm sai giao thức cập nhật (marker giả, viết tool call thành chữ, JSON hỏng…). Bấm vào để xem chi tiết và nút Đối chiếu.",
+    "The model is not following the state protocol: {n} of the last {m} turns had problems. Click the dot on the Character Sheet button for details.": "Model đang không tuân giao thức cập nhật chỉ số: {n} trong {m} lượt gần nhất có lỗi. Bấm chấm trên nút Character Sheet để xem chi tiết.",
+    "Model health: OK — the model follows the state protocol": "Sức khoẻ model: tốt — model tuân giao thức cập nhật",
+    "Model health: some protocol problems in recent turns": "Sức khoẻ model: vài lượt gần đây có lỗi giao thức",
+    "Model health: the model keeps breaking the state protocol": "Sức khoẻ model: model liên tục làm sai giao thức cập nhật",
+    "Model health": "Sức khoẻ model",
+    "No turns recorded yet in this chat.": "Chat này chưa có lượt nào được ghi nhận.",
+    "Protocol problems in the last {m} turns of this chat": "Lỗi giao thức trong {m} lượt gần nhất của chat này",
+    "Model: {model}": "Model: {model}",
+    "{n} of {m} turns had problems": "{n} trong {m} lượt có lỗi",
+    "{n} recent turns without any state change (information only — quiet scenes are normal).": "{n} lượt gần nhất không có thay đổi chỉ số nào (chỉ để tham khảo — đoạn truyện yên ả là bình thường).",
+    "Reconcile sheet": "Đối chiếu lại sheet",
+    "Puts a request into the chat input — you review it and send it yourself": "Điền một yêu cầu vào ô chat — bạn đọc lại rồi tự bấm gửi",
+    "The chat input was not found.": "Không tìm thấy ô nhập chat.",
+    "The chat input already has text. Add the reconcile request after it?": "Ô chat đang có chữ. Thêm yêu cầu đối chiếu vào sau phần chữ đó?",
+    "(OOC: Please check and reconcile the character sheet. Re-read the last {n} messages and compare them with the current sheet: STATS, CUSTOM data and inventory. List every mismatch you find, then make ONE update (tool call or <STATE_UPDATE> block) that corrects all of them, keeping STATS and CUSTOM consistent.)": "(OOC: Hãy kiểm tra và đối chiếu lại (reconcile) sheet nhân vật. Đọc lại {n} tin gần nhất và so với sheet hiện tại: STATS, dữ liệu CUSTOM và túi đồ. Liệt kê mọi chỗ lệch tìm được, rồi thực hiện MỘT lần cập nhật (tool call hoặc khối <STATE_UPDATE>) sửa tất cả, giữ STATS và CUSTOM khớp nhau.)",
+    "Wrote a [CSEVENT] marker instead of calling a tool": "Tự viết marker [CSEVENT] thay vì gọi tool",
+    "This model copies the change markers instead of calling the tools, so nothing is applied. Consider switching to a model that handles tool calling better.": "Model này hay chép marker thay đổi thay vì gọi tool, nên không có gì được áp. Cân nhắc đổi sang model gọi tool tốt hơn.",
+    "Wrote a <CSEVENT> block itself": "Tự viết khối <CSEVENT>",
+    "This model imitates the change cards instead of updating the state. Consider switching to a model that handles tool calling better.": "Model này bắt chước thẻ thay đổi thay vì cập nhật chỉ số. Cân nhắc đổi sang model gọi tool tốt hơn.",
+    "Wrote a tool call as text in the reply": "Viết tool call thành chữ trong câu trả lời",
+    "The model writes tool calls into the story text. Check that function calling is enabled for this model, or switch model.": "Model viết tool call vào lời kể. Kiểm tra đã bật function calling cho model này chưa, hoặc đổi model.",
+    "Sent JSON that could not be read": "Gửi JSON không đọc được",
+    "The model sends broken JSON. A stronger model or a lower temperature usually helps.": "Model gửi JSON hỏng. Model mạnh hơn hoặc giảm temperature thường đỡ.",
+    "Used a wrong update format": "Dùng sai định dạng cập nhật",
+    "The model does not use the update format it was taught. A stronger model usually helps.": "Model không dùng đúng định dạng cập nhật đã được dạy. Model mạnh hơn thường đỡ.",
+    "Update cut off before the end": "Khối cập nhật bị cắt giữa chừng",
+    "Replies are cut off before the update is complete. Raise the response length (max tokens).": "Câu trả lời bị cắt trước khi cập nhật xong. Tăng độ dài phản hồi (max tokens).",
+    "Used a stat name that is not on the sheet": "Dùng tên chỉ số không có trong sheet",
+    "The model guesses stat names. The Reconcile button below asks it to compare the story with the sheet.": "Model đoán tên chỉ số. Nút Đối chiếu bên dưới nhờ nó so truyện với sheet.",
+    "Targeted a character that does not exist": "Cập nhật cho nhân vật không tồn tại",
+    "The model uses names that are not in this chat. Check the character names on the sheet.": "Model dùng tên không có trong chat này. Kiểm tra tên nhân vật trên sheet.",
+    "Called the update tool without any change": "Gọi tool cập nhật mà không có thay đổi nào",
+    "The provider may drop the tool arguments. Try another provider for this model.": "Nhà cung cấp có thể làm rơi tham số tool. Thử nhà cung cấp khác cho model này.",
+    "Other protocol problem": "Lỗi giao thức khác",
+    "The model made protocol mistakes. Consider a stronger model.": "Model làm sai giao thức. Cân nhắc model mạnh hơn.",
     "Show pinned stats above the chat input": "Hiện chỉ số đã ghim phía trên ô chat",
     "Pin stats with ★ on the sheet; they appear as a compact bar with the last change.": "Ghim chỉ số bằng ★ trên sheet; chúng hiện thành một dải gọn kèm thay đổi gần nhất.",
     "Source": "Nguồn",
@@ -23690,6 +24105,10 @@ const DEFAULT_SETTINGS = {
     /* v3.3.0: "split" = stable rules at the start + live values in chat;
        "classic" = the v3.2.5 single block */
     promptLayout: "split",
+    /* v3.4.0: protocol-health light on the sheet button; "lean" tool set =
+       the duplicate UpdateCharacterState tool is not offered */
+    modelHealth: true,
+    toolSet: "lean",
     hudEnabled: true,
     eventCardsExpanded: false,
     eventCardSnapshotRow: false
@@ -23854,6 +24273,20 @@ function openSettingsOverlay() {
                     </select>
                     <div class="cs-settings-hint">${escapeHtml(csT("Split keeps the rules and stat definitions at the start of the prompt, unchanged between turns (providers can cache them), and sends the current values as a small block at the end of the chat. Nothing is left out. Group chats always use Classic."))}</div>
                 </div>
+                <div class="cs-settings-row">
+                    <label class="cs-settings-label" for="cs-set-tool-set">${escapeHtml(csT("Tool set"))}</label>
+                    <select id="cs-set-tool-set" class="text_pole cs-log-select" style="width:240px;">
+                        <option value="lean" ${settings.toolSet !== "full" ? "selected" : ""}>${escapeHtml(csT("Lean (no duplicate tools)"))}</option>
+                        <option value="full" ${settings.toolSet === "full" ? "selected" : ""}>${escapeHtml(csT("Full (every tool, as before 3.4.0)"))}</option>
+                    </select>
+                    <div class="cs-settings-hint">${escapeHtml(csT("Lean does not offer the old UpdateCharacterState tool: state_update does everything it does, and one tool fewer saves input tokens on every request. Calls to the old name still work."))}</div>
+                </div>
+                ${checkboxRow(
+                    "cs-set-model-health",
+                    escapeHtml(csT("Model health light")),
+                    escapeHtml(csT("A dot on the Character Sheet button turns yellow or red when the model keeps breaking the state protocol (fake markers, tool calls written as text, broken JSON…). Click it for details and a Reconcile button.")),
+                    settings.modelHealth !== false
+                )}
                 ${checkboxRow(
                     "cs-set-hud",
                     escapeHtml(csT("Show pinned stats above the chat input")),
@@ -23968,6 +24401,8 @@ function openSettingsOverlay() {
         return {
             promptDetail: overlay.querySelector("#cs-set-prompt-detail")?.value === "maximum" ? "maximum" : "standard",
             promptLayout: overlay.querySelector("#cs-set-prompt-layout")?.value === "classic" ? "classic" : "split",
+            toolSet: overlay.querySelector("#cs-set-tool-set")?.value === "full" ? "full" : "lean",
+            modelHealth: Boolean(overlay.querySelector("#cs-set-model-health")?.checked),
             hudEnabled: Boolean(overlay.querySelector("#cs-set-hud")?.checked),
             uiLanguage: uiLanguage === "en" || uiLanguage === "vi" ? uiLanguage : "auto",
             eventCardsExpanded: Boolean(overlay.querySelector("#cs-set-event-cards-expanded")?.checked),
@@ -25426,7 +25861,11 @@ function registerCharacterStateTool() {
                 },
                 required: ["character"]
             },
-            shouldRegister: () => Boolean(context.isToolCallingSupported?.()),
+            /* v3.4.0: state_update covers everything this tool does (FIXES
+               #66) — in the "lean" tool set it is not offered to the model,
+               but it stays registered: a native call (a model copying old
+               history) and the text fallback still run it. */
+            shouldRegister: () => Boolean(context.isToolCallingSupported?.()) && getExtensionSettings().toolSet === "full",
             formatMessage: params => `[Character State] ${String(params?.character ?? "")}: state updated`,
             action: async params => {
                 const targetName = String(params?.character ?? "").trim();
@@ -25447,6 +25886,7 @@ function registerCharacterStateTool() {
                 const character = resolveStateUpdateCharacter(targetName);
 
                 if (!character) {
+                    recordProtocolProblem("unknown_target");
                     const ambiguous = ambiguousNameHint(targetName);
                     if (ambiguous) return `ERROR:${ambiguous}`;
                     return `ERROR: no character named "${targetName}" exists in this chat. State tools CANNOT create characters — for a NEW character call the state_create_npc tool, or emit a <SIDE_NPC_CREATE>{...}</SIDE_NPC_CREATE> block in your reply text instead.`;
@@ -25599,6 +26039,7 @@ function registerCharacterStateTool() {
                 const { update, errors } = normalizeSemanticToolRequest(params);
 
                 if (errors.length) {
+                    recordProtocolProblem("bad_json");
                     return `ERROR MALFORMED_REQUEST: ${errors.join(" ")}`;
                 }
 
@@ -25607,6 +26048,7 @@ function registerCharacterStateTool() {
                 const carriesChange = value => value !== undefined && value !== null &&
                     (typeof value !== "object" || Object.keys(value).length > 0);
                 if (!SEMANTIC_CHANGE_FIELDS.some(field => carriesChange(update[field]))) {
+                    recordProtocolProblem("empty_call");
                     return "ERROR EMPTY_REQUEST: this call carried NO change — only \"character\" arrived, so NOTHING was updated. " +
                         "Call state_update again with the whole change as ONE JSON string in \"json\", e.g. " +
                         "{\"character\":\"USER\",\"json\":\"{\\\"stats\\\":{\\\"HP\\\":-5},\\\"inventory\\\":{\\\"add\\\":[{\\\"name\\\":\\\"Rope\\\",\\\"quantity\\\":1}]}}\"}, " +
@@ -25616,6 +26058,7 @@ function registerCharacterStateTool() {
                 const character = resolveStateUpdateCharacter(targetName);
 
                 if (!character) {
+                    recordProtocolProblem("unknown_target");
                     return `ERROR UNKNOWN_ENTITY: no character named "${targetName}" exists in this chat. State tools CANNOT create characters — for a NEW character call the state_create_npc tool (stats = starting values, schema keys), or emit ONE <SIDE_NPC_CREATE>{"name":"<exact name>","stats":{...}}</SIDE_NPC_CREATE> block in your reply text.`;
                 }
 
@@ -26289,6 +26732,8 @@ if (event_types?.GENERATION_STARTED) {
             return;
         }
         settleToolLeftovers();
+        /* v3.4.0: a new turn starts with a clean health record */
+        resetTurnHealth();
     });
 }
 
