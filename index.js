@@ -9192,6 +9192,50 @@ function stripHallucinatedEventTagBlocks(text) {
 }
 
 /*
+ * v3.2.4: weaker models copy the "[CSEVENT:#n summary]" marker lines they
+ * see at the top of earlier replies and open their own reply with one
+ * INSTEAD of calling a tool — nothing is applied, the fake line stays in
+ * the chat as raw text and becomes one more example to copy. A leading
+ * marker line is real only when the message already stores a card for
+ * that index (extra.csEvents — a continue keeps its earlier cards).
+ */
+const SELF_WRITTEN_EVENT_MARKER_REGEX = /^\[CS_?EVENT\b(?::\s*#?(\d+))?[^\]]*\]?/i;
+
+function stripSelfWrittenEventMarkers(text, message) {
+    const source = String(text ?? "");
+    if (!/\[CS_?EVENT/i.test(source)) return source;
+
+    const storedCards = Array.isArray(message?.extra?.csEvents) ? message.extra.csEvents.length : 0;
+    const lines = source.split("\n");
+    let stripped = 0;
+    let i = 0;
+
+    while (i < lines.length) {
+        const trimmed = lines[i].trim();
+        if (!trimmed) { i++; continue; }
+
+        const match = SELF_WRITTEN_EVENT_MARKER_REGEX.exec(trimmed);
+        if (!match) break;
+
+        if (match[1] !== undefined && Number(match[1]) < storedCards) { i++; continue; }
+
+        const rest = trimmed.slice(match[0].length).trim();
+        if (rest) lines[i] = rest; else lines.splice(i, 1);
+        stripped++;
+        if (rest) break;
+    }
+
+    if (!stripped) return source;
+
+    queueFeedbackNotice(
+        "Your reply began with a [CSEVENT:...] line. That marker is SYSTEM-GENERATED from applied updates — never write it yourself. The line was removed and NOTHING it listed was applied. " +
+        "If those changes really happened, apply them NOW with the state_update tool (or a <STATE_UPDATE> block) — state only changes through those."
+    );
+
+    return lines.join("\n").replace(/^\n+/, "");
+}
+
+/*
  * Build the transient block that is appended to the NEXT prompt exactly
  * once: "APPLIED LAST TURN" lines (this turn's changes) + any queued
  * <STATE_LOG> result. Token budget: 8 lines / ~600 chars.
@@ -10609,6 +10653,7 @@ async function handleMessageReceivedCore(messageId, type) {
            STATE_REGEX matching — they are hallucinated copies of the
            system marker, never valid payloads (see helper). */
         cleanedText = stripHallucinatedEventTagBlocks(cleanedText);
+        cleanedText = stripSelfWrittenEventMarkers(cleanedText, message);
 
         const match = cleanedText.match(STATE_REGEX);
         if (!match) {
