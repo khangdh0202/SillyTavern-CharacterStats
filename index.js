@@ -4186,7 +4186,9 @@ function markGameTimeStale(context) {
 
 /* ---- AI-facing prompt block --------------------------------------- */
 
-function renderGameTimePromptBlock(context) {
+/* layout: "classic" (one block) | "stable" (v3.3.0: rules only) |
+   "live" (v3.3.0: current time, calendar, pause — no tags) */
+function renderGameTimePromptBlock(context, layout = "classic") {
     const clock = getGameTime(context);
     const minutes = clock?.minutes ?? 0;
     const paused = Boolean(context?.chatMetadata?.[CLOCK_PAUSED_KEY]);
@@ -4195,6 +4197,24 @@ function renderGameTimePromptBlock(context) {
     const pausedLine = paused
         ? "The game clock is PAUSED by the player: keep the current time (do not advance it) until the player unpauses."
         : "";
+
+    const ruleLines = [
+        "At the end of EVERY response, append exactly one <TIME>NNN</TIME> block with the new game time in minutes (a non-negative integer).",
+        "Advance the time based on what happened in the story this turn (travel, rest, actions, conversations).",
+        "Never move the time backwards. Small increments for short scenes, larger ones for travel or long tasks.",
+        "If this turn advances the story time by nothing at all, repeat the current value."
+    ];
+    const valueLines = [
+        `Current game time: ${formatGameTime(minutes)} (${minutes} minutes since the story started).`,
+        calendarLine,
+        pausedLine
+    ].filter(Boolean);
+
+    if (layout === "stable") {
+        return ["<GAME_TIME>", "The current game time and calendar are in the <CHARACTER_STATE_LIVE> block.", ...ruleLines, "</GAME_TIME>"].join("\n");
+    }
+
+    if (layout === "live") return valueLines.join("\n");
 
     return [
         "<GAME_TIME>",
@@ -11082,9 +11102,17 @@ function resolveStateUpdateTargets(payload, speaker) {
 ========================================================= */
 
 const CHARACTER_STATE_PROMPT_KEY = "character_state_prompt";
+/* v3.3.0: split layout — current values go in a second, in-chat prompt */
+const CHARACTER_STATE_LIVE_PROMPT_KEY = "character_state_prompt_live";
 const EXTENSION_PROMPT_NONE = -1;
 const EXTENSION_PROMPT_IN_PROMPT = 0;
+const EXTENSION_PROMPT_IN_CHAT = 1;
 const EXTENSION_PROMPT_SYSTEM = 0;
+/* Depth 0 = right after the newest message. Core keeps it safe: text
+   completion moves depth 0 above the message being continued, chat
+   completion takes the continue-prefill message out before injecting,
+   and a tool round re-runs the interceptor (fresh values). */
+const CS_LIVE_PROMPT_DEPTH = 0;
 
 let lastCharacterStatePrompt = "";
 let lastCharacterStatePromptCharacterKey = null;
@@ -11285,7 +11313,9 @@ function renderGroupDirectoryBlock(directoryLines) {
     ].join("\n");
 }
 
-function renderCharacterStateBlock(character, state, isCurrentCharacter, skipStateInstructions = false) {
+/* layout: "classic" (one block, values included) | "stable" (v3.3.0:
+   rules + definitions only — the values go to renderCharacterLiveSection) */
+function renderCharacterStateBlock(character, state, isCurrentCharacter, skipStateInstructions = false, layout = "classic") {
     if (!character) return "";
 
     const characterName = promptNameFor(character);
@@ -11293,9 +11323,11 @@ function renderCharacterStateBlock(character, state, isCurrentCharacter, skipSta
 
     if (isCurrentCharacter) {
         lines.push("<CHARACTER_STATE>");
-        lines.push(`Current Character: ${characterName}`);
-        if (characterName !== (character.name || "Character")) {
-            lines.push(`Several characters in this chat are named "${character.name}" — always target this one as "${characterName}".`);
+        if (layout !== "stable") {
+            lines.push(`Current Character: ${characterName}`);
+            if (characterName !== (character.name || "Character")) {
+                lines.push(`Several characters in this chat are named "${character.name}" — always target this one as "${characterName}".`);
+            }
         }
         lines.push("");
 
@@ -11469,7 +11501,9 @@ function renderCharacterStateBlock(character, state, isCurrentCharacter, skipSta
         lines.push("");
     }
 
-    appendStateDataSections(lines, state, getCustomFieldMetaMap(SillyTavern.getContext(), getCharacterKey(character)));
+    const customMeta = getCustomFieldMetaMap(SillyTavern.getContext(), getCharacterKey(character));
+    if (layout === "stable") appendStateDefinitionSections(lines, state, customMeta);
+    else appendStateDataSections(lines, state, customMeta);
 
     if (isCurrentCharacter && !skipStateInstructions) {
         lines.push(
@@ -13265,6 +13299,17 @@ function appendStateDataSections(lines, state, customMeta = null) {
         lines.push("- None");
     }
 
+    appendSkillsInventoryEffectsSections(lines, state);
+
+    lines.push("", "CUSTOM:");
+
+    const custom = buildCustomPromptPieces(state, customMeta);
+    if (custom.rules) lines.push(custom.rules);
+    if (custom.none) lines.push("None");
+    lines.push(...custom.dataLines, ...custom.updateLines);
+}
+
+function appendSkillsInventoryEffectsSections(lines, state) {
     lines.push("", "SKILLS:");
     if (Array.isArray(state?.skills) && state.skills.length) {
         for (const skill of state.skills) {
@@ -13290,8 +13335,16 @@ function appendStateDataSections(lines, state, customMeta = null) {
     } else {
         lines.push("- None");
     }
+}
 
-    lines.push("", "CUSTOM:");
+/* The CUSTOM section in pieces: rules text (user-owned, stable), "None",
+   data lines (values) and update rules + SYNC MAP (stable). Classic order:
+   rules, None, data, update rules. */
+function buildCustomPromptPieces(state, customMeta = null) {
+    const dataLines = [];
+    const updateLines = [];
+    let rulesText = "";
+    let none = false;
 
     const promptMode = resolvePromptCustomMode();
     const hasCustomObject = state?.custom && typeof state.custom === "object" && Object.keys(state.custom).length > 0;
@@ -13307,22 +13360,22 @@ function appendStateDataSections(lines, state, customMeta = null) {
         const fullRules = splitCustomRulesText(state?.customText);
 
         if (fullRules) {
-            lines.push(fullRules);
+            rulesText = fullRules;
         }
 
         if (customDataSource) {
-            lines.push(JSON.stringify(customDataSource, null, 2));
+            dataLines.push(JSON.stringify(customDataSource, null, 2));
         } else if (!fullRules) {
-            lines.push("None");
+            none = true;
         }
     } else {
         /* compact: RULES text (JSON block inside stripped) + compact data. */
         const rules = splitCustomRulesText(state?.customText);
 
         if (rules) {
-            lines.push(rules);
+            rulesText = rules;
         } else if (!customDataPresent) {
-            lines.push("None");
+            none = true;
         }
 
         if (customDataSource) {
@@ -13335,22 +13388,23 @@ function appendStateDataSections(lines, state, customMeta = null) {
             const compactData = renderCompactCustomData(customDataSource, true, getPromptCustomCharCap(), customMeta);
 
             if (compactData) {
-                lines.push("CUSTOM DATA (compact):");
-                lines.push(compactData);
+                dataLines.push("CUSTOM DATA (compact):");
+                dataLines.push(compactData);
 
                 const hiddenCount = Object.values(customMeta || {})
                     .filter(meta => meta?.visibility === "hidden" || meta?.visibility === "ui").length;
 
                 if (hiddenCount) {
-                    lines.push(`Note: ${hiddenCount} custom field(s) are hidden from this prompt by user configuration — read them with state_get.`);
+                    dataLines.push(`Note: ${hiddenCount} custom field(s) are hidden from this prompt by user configuration — read them with state_get.`);
                 }
 
-                lines.push("Note: every field above is listed (default values included). Use these exact paths for updates — you may add NEW fields per the CUSTOM FIELD RULES below, but never modify or remove existing ones.");
+                dataLines.push("Note: every field above is listed (default values included). Use these exact paths for updates — you may add NEW fields per the CUSTOM FIELD RULES below, but never modify or remove existing ones.");
             }
         }
     }
 
     if (customDataPresent) {
+        const lines = updateLines;
         lines.push("");
         lines.push("CUSTOM UPDATE RULES:");
         lines.push("Change custom data ONLY by emitting a <STATE_UPDATE> whose \"custom\" value is a JSON object with ONLY the paths you change (partial payloads are deep-merged onto the current data).");
@@ -13376,12 +13430,233 @@ function appendStateDataSections(lines, state, customMeta = null) {
             lines.push(...syncLines);
         }
     }
+
+    return { rules: rulesText, none, dataLines, updateLines };
+}
+
+/* =========================================================
+   PROMPT LAYOUT SPLIT (v3.3.0)
+   STABLE (start of the prompt, unchanged between turns while the sheet
+   definitions are unchanged): protocol rules, stat DEFINITIONS (type,
+   limits, options, aiBaseEdit, description, onChange), custom rules
+   text, custom update rules + SYNC MAP, game-time rules, user-state
+   rules. LIVE (in-chat, depth 0): speaking character, stat VALUES,
+   skills, inventory, effects, custom data, game time, applied block,
+   active scene. Nothing is dropped — only moved. Group chats keep the
+   classic one-block layout.
+========================================================= */
+
+function renderStatDefinitionLine(name, stat) {
+    if (stat.type === "number") {
+        const min = normalizeNumberOrNull(stat.min);
+        const max = normalizeNumberOrNull(stat.max);
+        const limits = min === 0 && max === 0
+            ? "unlimited"
+            : `min=${min ?? "unlimited"}, max=${max ?? "unlimited"}`;
+
+        return `${name}: type=number, ${limits}${stat.aiBaseEdit ? ", aiBaseEdit=allowed" : ""}`;
+    }
+
+    if (stat.type === "boolean") return `${name}: type=boolean`;
+    if (stat.type === "choice") return `${name}: type=choice, values=${JSON.stringify(stat.options || [])}`;
+    return `${name}: type=text`;
+}
+
+/* Number: effective value (base + mod + effects) then (min–max); base,
+   mod and effects are spelled out whenever mod or effects are not zero,
+   so every number of the classic line can still be read. */
+function renderStatValueLine(name, stat, state) {
+    if (stat.type === "number") {
+        const base = Number(stat.base || 0);
+        const mod = Number(stat.mod || 0);
+        const effectDelta = getEffectDeltaForStat(state, name);
+        const totalEff = base + mod + effectDelta;
+        const min = normalizeNumberOrNull(stat.min);
+        const max = normalizeNumberOrNull(stat.max);
+        const range = min === 0 && max === 0
+            ? "unlimited"
+            : `${min ?? "unlimited"}–${max ?? "unlimited"}`;
+        const detail = mod !== 0 || effectDelta
+            ? ` (base=${stat.base}, mod=${stat.mod}${effectDelta ? `, effects=${effectDelta > 0 ? "+" : ""}${effectDelta}` : ""})`
+            : "";
+
+        return `${name}: ${totalEff}${detail} (${range})`;
+    }
+
+    return `${name}: ${stat.base}`;
+}
+
+function appendStateDefinitionSections(lines, state, customMeta = null) {
+    lines.push("STATS:");
+
+    const stats = state?.stats || {};
+    if (Object.keys(stats).length) {
+        for (const [name, stat] of Object.entries(stats)) {
+            if (!stat || typeof stat !== "object") continue;
+
+            lines.push(renderStatDefinitionLine(name, stat));
+            if (stat.description) lines.push(`${name}.description=${stat.description}`);
+            if (stat.onChange) lines.push(`${name}.onChange=${stat.onChange}`);
+        }
+    } else {
+        lines.push("- None");
+    }
+
+    const custom = buildCustomPromptPieces(state, customMeta);
+
+    if (custom.rules || custom.updateLines.length) {
+        lines.push("", "CUSTOM:");
+        if (custom.rules) lines.push(custom.rules);
+        lines.push(...custom.updateLines);
+    }
+}
+
+function appendStateValueSections(lines, state, customMeta = null) {
+    lines.push("STATS:");
+
+    const stats = state?.stats || {};
+    if (Object.keys(stats).length) {
+        for (const [name, stat] of Object.entries(stats)) {
+            if (!stat || typeof stat !== "object") continue;
+            lines.push(renderStatValueLine(name, stat, state));
+        }
+    } else {
+        lines.push("- None");
+    }
+
+    appendSkillsInventoryEffectsSections(lines, state);
+
+    const custom = buildCustomPromptPieces(state, customMeta);
+
+    if (custom.dataLines.length) {
+        lines.push("", "CUSTOM:", ...custom.dataLines);
+    } else if (custom.none) {
+        lines.push("", "CUSTOM:", "None");
+    }
+}
+
+function renderCharacterLiveSection(character, state) {
+    const characterName = promptNameFor(character);
+    const lines = [`Current Character: ${characterName}`];
+
+    if (characterName !== (character.name || "Character")) {
+        lines.push(`Several characters in this chat are named "${character.name}" — always target this one as "${characterName}".`);
+    }
+
+    appendStateValueSections(lines, state, getCustomFieldMetaMap(SillyTavern.getContext(), getCharacterKey(character)));
+    return lines.join("\n");
+}
+
+function renderUserStateLiveSection(state) {
+    const lines = [`Character: ${USER_STATE_PROTOCOL_NAME} (the player, ${USER_STATE_UI_NAME})`];
+    appendStateValueSections(lines, state, getCustomFieldMetaMap(SillyTavern.getContext(), USER_STATE_KEY));
+    return lines.join("\n");
+}
+
+function resolvePromptLayout(context, groupStates) {
+    if (getExtensionSettings().promptLayout === "classic") return "classic";
+    if (context?.groupId) return "classic";
+    if (Array.isArray(groupStates) && groupStates.length) return "classic";
+    return "split";
+}
+
+const CS_STABLE_PROMPT_POINTER = "PERSISTENT STATE — DEFINITIONS AND RULES. The CURRENT values (speaking character, stat values, skills, inventory, active effects, custom data, game time, last turn's applied changes) are in the <CHARACTER_STATE_LIVE> block near the end of the conversation — always read values there; the blocks below hold the stat definitions and every update rule.";
+
+/*
+ * Both prompts for one generation. Classic = the exact v3.2.5 single
+ * block (stable) and no live block. peek: read the APPLIED block without
+ * consuming it (impersonate, token meter).
+ */
+function composeCharacterStatePrompts(context, character, state, groupStates, toolCallingActive, chat, { peek = false } = {}) {
+    const layout = resolvePromptLayout(context, groupStates);
+    const historyLength = Array.isArray(context.chat) ? context.chat.length : 0;
+
+    if (layout === "classic") {
+        const promptParts = [buildCharacterStatePrompt(character, state, groupStates, toolCallingActive)];
+
+        /* Game clock: model-facing time protocol, every turn. */
+        if (Array.isArray(chat)) {
+            promptParts.push(renderGameTimePromptBlock(context));
+        }
+
+        if (isUserContextAvailable(context)) {
+            /* Group AND single character chats describe the {{user}} state
+               entity. After a long conversation the creation protocol is
+               compressed to one line. */
+            const storedUserState = getStoredUserState(context);
+            promptParts.push(storedUserState
+                ? renderUserStatePromptBlock(normalizeRuntimeState(storedUserState))
+                : renderUserStateStatusPromptBlock(historyLength > 50));
+        }
+
+        /* Transient: changes applied by the previous assistant turn and any
+           queued STATE_LOG answer — injected at most once, never accumulates. */
+        const appliedBlock = buildPendingAppliedBlock({ peek });
+        if (appliedBlock) promptParts.push(appliedBlock);
+
+        /* Active scene (A2): pointer only — scenes are created on explicit
+           user request, never automatically. */
+        promptParts.push(renderScenePromptBlock(context));
+
+        return { layout, stable: promptParts.filter(Boolean).join("\n\n"), live: "" };
+    }
+
+    const stableParts = [
+        CS_STABLE_PROMPT_POINTER,
+        renderCharacterStateBlock(character, state, true, toolCallingActive, "stable")
+    ];
+    const liveLines = [
+        "<CHARACTER_STATE_LIVE>",
+        "Current values of the persistent state, refreshed every turn. Definitions (type, limits, options, descriptions) and every update rule are in the <CHARACTER_STATE> / <USER_CHARACTER_STATE> / <GAME_TIME> blocks at the start of the prompt.",
+        "Number stats: current effective value (base + mod + active effects), then (min–max); base / mod / effects are listed when mod or effects are not zero.",
+        "",
+        "<CHARACTER_STATE> values:",
+        renderCharacterLiveSection(character, state)
+    ];
+
+    if (Array.isArray(chat)) {
+        stableParts.push(renderGameTimePromptBlock(context, "stable"));
+        liveLines.push("", "<GAME_TIME> values:", renderGameTimePromptBlock(context, "live"));
+    }
+
+    if (isUserContextAvailable(context)) {
+        const storedUserState = getStoredUserState(context);
+
+        if (storedUserState) {
+            const userState = normalizeRuntimeState(storedUserState);
+            stableParts.push(renderUserStatePromptBlock(userState, "stable"));
+            liveLines.push("", "<USER_CHARACTER_STATE> values:", renderUserStateLiveSection(userState));
+        } else {
+            stableParts.push(renderUserStateStatusPromptBlock(historyLength > 50));
+        }
+    }
+
+    liveLines.push("</CHARACTER_STATE_LIVE>");
+
+    const liveParts = [liveLines.join("\n")];
+    const appliedBlock = buildPendingAppliedBlock({ peek });
+    if (appliedBlock) liveParts.push(appliedBlock);
+    liveParts.push(renderScenePromptBlock(context));
+
+    return {
+        layout,
+        stable: stableParts.filter(Boolean).join("\n\n"),
+        live: liveParts.filter(Boolean).join("\n\n")
+    };
 }
 
 function clearCharacterStatePromptInjection() {
     const context = SillyTavern.getContext();
 
     if (typeof context.setExtensionPrompt === "function") {
+        context.setExtensionPrompt(
+            CHARACTER_STATE_LIVE_PROMPT_KEY,
+            "",
+            EXTENSION_PROMPT_NONE,
+            0,
+            false,
+            EXTENSION_PROMPT_SYSTEM
+        );
         context.setExtensionPrompt(
             CHARACTER_STATE_PROMPT_KEY,
             "",
@@ -13397,7 +13672,7 @@ function clearCharacterStatePromptInjection() {
     resetPendingAppliedParts();
 }
 
-function renderUserStatePromptBlock(state) {
+function renderUserStatePromptBlock(state, layout = "classic") {
     const lines = [];
 
     lines.push("<USER_CHARACTER_STATE>");
@@ -13414,7 +13689,9 @@ function renderUserStatePromptBlock(state) {
     lines.push("Never write the User State into any Character Card.");
     lines.push("Do not also emit a STATE_UPDATE for stats you just declared inside a USER_STATE_CREATE (those values are applied once as Base).");
 
-    appendStateDataSections(lines, state, getCustomFieldMetaMap(SillyTavern.getContext(), USER_STATE_KEY));
+    const customMeta = getCustomFieldMetaMap(SillyTavern.getContext(), USER_STATE_KEY);
+    if (layout === "stable") appendStateDefinitionSections(lines, state, customMeta);
+    else appendStateDataSections(lines, state, customMeta);
 
     lines.push("</USER_CHARACTER_STATE>");
 
@@ -13494,47 +13771,35 @@ async function injectCharacterStatePrompt(chat) {
     const context = SillyTavern.getContext();
 
     const toolCallingActive = Boolean(context.isToolCallingSupported?.());
-    const promptParts = [buildCharacterStatePrompt(character, state, groupStates, toolCallingActive)];
-
-    /* Game clock: model-facing time protocol, every turn. */
-    if (Array.isArray(chat)) {
-        promptParts.push(renderGameTimePromptBlock(context));
-    }
-
-    if (isUserContextAvailable(context)) {
-        /* Group AND single character chats describe the {{user}} state
-           entity. After a long conversation the creation protocol is
-           compressed to one line. */
-        const historyLength = Array.isArray(context.chat) ? context.chat.length : 0;
-        const storedUserState = getStoredUserState(context);
-        promptParts.push(storedUserState
-            ? renderUserStatePromptBlock(normalizeRuntimeState(storedUserState))
-            : renderUserStateStatusPromptBlock(historyLength > 50));
-    }
-
-    /* Transient: changes applied by the previous assistant turn and any
-       queued STATE_LOG answer — injected at most once, never accumulates. */
-    const appliedBlock = buildPendingAppliedBlock({ peek: csPeekAppliedBlock });
-    if (appliedBlock) promptParts.push(appliedBlock);
-
-    /* Active scene (A2): pointer only — scenes are created on explicit
-       user request, never automatically. */
-    promptParts.push(renderScenePromptBlock(context));
-
-    const prompt = promptParts.filter(Boolean).join("\n\n");
+    const composed = composeCharacterStatePrompts(context, character, state, groupStates, toolCallingActive, chat, { peek: csPeekAppliedBlock });
+    /* classic: the whole prompt; split: stable + live (fallback path and
+       CharacterStateAPI.getLastInjectedPrompt read the joined text) */
+    const prompt = [composed.stable, composed.live].filter(Boolean).join("\n\n");
     if (!prompt) return false;
 
     if (typeof context.setExtensionPrompt === "function") {
+        /* v3.1.2 X2: both prompts are skipped by quiet (background) generations */
+        const notQuiet = () => csNormalGenerationInFlight || !csQuietGenerationActive;
+
+        /* v3.3.0: live block in chat (classic / group: cleared) */
+        context.setExtensionPrompt(
+            CHARACTER_STATE_LIVE_PROMPT_KEY,
+            composed.live,
+            composed.live ? EXTENSION_PROMPT_IN_CHAT : EXTENSION_PROMPT_NONE,
+            CS_LIVE_PROMPT_DEPTH,
+            false,
+            EXTENSION_PROMPT_SYSTEM,
+            notQuiet
+        );
         // Official SillyTavern prompt injection API.
         context.setExtensionPrompt(
             CHARACTER_STATE_PROMPT_KEY,
-            prompt,
+            composed.stable,
             EXTENSION_PROMPT_IN_PROMPT,
             0,
             false,
             EXTENSION_PROMPT_SYSTEM,
-            /* v3.1.2 X2: skipped by quiet (background) generations */
-            () => csNormalGenerationInFlight || !csQuietGenerationActive
+            notQuiet
         );
     } else if (Array.isArray(chat)) {
         /* Compatibility fallback only when the official API is
@@ -13786,9 +14051,30 @@ function buildTokenSummaryEstimate() {
 
     if (!rows.length) return null;
 
+    /* v3.3.0: how the same content is split (peek — consumes nothing) */
+    let layoutSplit = null;
+    try {
+        const groupStatesForLayout = members
+            .filter(member => getCharacterKey(member) !== getCharacterKey(character))
+            .map(member => ({ character: member, state: getCharacterState(member) }));
+        const composed = composeCharacterStatePrompts(context, character, state, groupStatesForLayout, toolCallingActive, context.chat, { peek: true });
+
+        if (composed.layout === "split") {
+            layoutSplit = {
+                stableChars: composed.stable.length,
+                liveChars: composed.live.length,
+                stableTokens: estimateTokens(composed.stable.length),
+                liveTokens: estimateTokens(composed.live.length)
+            };
+        }
+    } catch (error) {
+        console.warn("[Character State] Prompt layout estimate failed:", error);
+    }
+
     return {
         rows,
         totalChars,
+        layoutSplit,
         /* Sum of per-row estimates (NOT a separate estimate of totalChars):
            the breakdown must add up to the displayed total regardless of
            per-row rounding. */
@@ -13850,6 +14136,7 @@ function openTokenSummaryOverlay(summary) {
                     <button class="cs-chip${detail === "standard" ? " cs-chip-accent" : " cs-chip-soft"}" type="button" data-cs-prompt-detail="standard">${escapeHtml(csT("Standard"))}</button>
                     <button class="cs-chip${detail === "maximum" ? " cs-chip-accent" : " cs-chip-soft"}" type="button" data-cs-prompt-detail="maximum">${escapeHtml(csT("Maximum (smartest, more tokens)"))}</button>
                 </div>
+                ${summary.layoutSplit ? `<div class="cs-settings-hint">${csH("Split layout: stable {stable} tok at the start of the prompt (cacheable) · live {live} tok at the end of the chat", { stable: formatNumber(summary.layoutSplit.stableTokens), live: formatNumber(summary.layoutSplit.liveTokens) })}</div>` : ""}
                 ${rows}
             </div>
             <div class="cs-log-footer">
@@ -22299,6 +22586,11 @@ const CS_VI = {
     "Prompt detail": "Mức chi tiết của prompt",
     "Standard": "Chuẩn",
     "Maximum (smartest, more tokens)": "Tối đa (AI hiểu nhiều nhất, tốn token hơn)",
+    "Prompt layout": "Bố cục prompt",
+    "Split (stable rules + live values)": "Tách (luật ổn định + giá trị sống)",
+    "Classic (one block)": "Cổ điển (một khối)",
+    "Split keeps the rules and stat definitions at the start of the prompt, unchanged between turns (providers can cache them), and sends the current values as a small block at the end of the chat. Nothing is left out. Group chats always use Classic.": "Tách: luật và định nghĩa chỉ số nằm đầu prompt, không đổi giữa các lượt (nhà cung cấp cache được), còn giá trị hiện tại gửi thành một khối nhỏ ở cuối hội thoại. Không bỏ bớt nội dung nào. Chat nhóm luôn dùng Cổ điển.",
+    "Split layout: stable {stable} tok at the start of the prompt (cacheable) · live {live} tok at the end of the chat": "Bố cục tách: phần ổn định {stable} tok ở đầu prompt (cache được) · phần sống {live} tok ở cuối hội thoại",
     "Maximum shows the model up to 40,000 characters of custom data (Standard: 8,000) and always sends every group member in full. Best when input tokens are not a concern.": "Tối đa cho model thấy tới 40.000 ký tự custom data (Chuẩn: 8.000) và luôn gửi đầy đủ mọi thành viên trong nhóm. Hợp khi không ngại token đầu vào.",
     "Show pinned stats above the chat input": "Hiện chỉ số đã ghim phía trên ô chat",
     "Pin stats with ★ on the sheet; they appear as a compact bar with the last change.": "Ghim chỉ số bằng ★ trên sheet; chúng hiện thành một dải gọn kèm thay đổi gần nhất.",
@@ -23395,6 +23687,9 @@ const DEFAULT_SETTINGS = {
     /* v3 UI */
     uiLanguage: "en",
     promptDetail: "standard",
+    /* v3.3.0: "split" = stable rules at the start + live values in chat;
+       "classic" = the v3.2.5 single block */
+    promptLayout: "split",
     hudEnabled: true,
     eventCardsExpanded: false,
     eventCardSnapshotRow: false
@@ -23551,6 +23846,14 @@ function openSettingsOverlay() {
                     </select>
                     <div class="cs-settings-hint">${escapeHtml(csT("Maximum shows the model up to 40,000 characters of custom data (Standard: 8,000) and always sends every group member in full. Best when input tokens are not a concern."))}</div>
                 </div>
+                <div class="cs-settings-row">
+                    <label class="cs-settings-label" for="cs-set-prompt-layout">${escapeHtml(csT("Prompt layout"))}</label>
+                    <select id="cs-set-prompt-layout" class="text_pole cs-log-select" style="width:240px;">
+                        <option value="split" ${settings.promptLayout !== "classic" ? "selected" : ""}>${escapeHtml(csT("Split (stable rules + live values)"))}</option>
+                        <option value="classic" ${settings.promptLayout === "classic" ? "selected" : ""}>${escapeHtml(csT("Classic (one block)"))}</option>
+                    </select>
+                    <div class="cs-settings-hint">${escapeHtml(csT("Split keeps the rules and stat definitions at the start of the prompt, unchanged between turns (providers can cache them), and sends the current values as a small block at the end of the chat. Nothing is left out. Group chats always use Classic."))}</div>
+                </div>
                 ${checkboxRow(
                     "cs-set-hud",
                     escapeHtml(csT("Show pinned stats above the chat input")),
@@ -23664,6 +23967,7 @@ function openSettingsOverlay() {
 
         return {
             promptDetail: overlay.querySelector("#cs-set-prompt-detail")?.value === "maximum" ? "maximum" : "standard",
+            promptLayout: overlay.querySelector("#cs-set-prompt-layout")?.value === "classic" ? "classic" : "split",
             hudEnabled: Boolean(overlay.querySelector("#cs-set-hud")?.checked),
             uiLanguage: uiLanguage === "en" || uiLanguage === "vi" ? uiLanguage : "auto",
             eventCardsExpanded: Boolean(overlay.querySelector("#cs-set-event-cards-expanded")?.checked),

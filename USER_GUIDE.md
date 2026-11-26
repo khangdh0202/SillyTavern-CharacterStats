@@ -269,6 +269,7 @@ Number stats get a sparkline on the sheet; clicking it opens a larger chart (gri
 | --- | --- | --- |
 | Interface language | English | Auto (follows SillyTavern) / English / Tiếng Việt |
 | **Prompt detail** | Standard | **Maximum** shows the model up to 40,000 characters of custom data (Standard: 8,000) and always sends every group member in full — the smartest option when input tokens are not a concern |
+| **Prompt layout** | Split | **Split** keeps the rules and stat definitions at the start of the prompt, unchanged between turns (providers can cache them), and sends the current values (stats, skills, inventory, effects, custom data, game time) as a small block at the end of the chat. Nothing is left out. **Classic** sends everything as one block at the start, as before 3.3.0. Group chats always use Classic |
 | Show pinned stats above the chat input | ON | The HUD (only appears when something is pinned) |
 | Heuristic parser | OFF | Local fallback that parses simple damage/gain sentences when the model forgets the protocol (risk of false positives) |
 | Record stat history | ON | Data for sparklines and charts |

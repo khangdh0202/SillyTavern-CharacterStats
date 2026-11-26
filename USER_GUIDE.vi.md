@@ -269,6 +269,7 @@ Stat number có sparkline trên sheet; click mở chart lớn (lưới, nhãn tr
 | --- | --- | --- |
 | Ngôn ngữ giao diện | English | Tự động (theo SillyTavern) / English / Tiếng Việt |
 | **Mức chi tiết của prompt** | Chuẩn | **Tối đa** cho model thấy tới 40.000 ký tự custom data (Chuẩn: 8.000) và luôn gửi đầy đủ mọi thành viên nhóm — lựa chọn để AI hiểu nhiều nhất khi không ngại token đầu vào |
+| **Bố cục prompt** | Tách | **Tách**: luật và định nghĩa chỉ số nằm đầu prompt, không đổi giữa các lượt (nhà cung cấp cache được), còn giá trị hiện tại (chỉ số, kỹ năng, túi đồ, hiệu ứng, custom data, giờ game) gửi thành một khối nhỏ ở cuối hội thoại. Không bỏ bớt nội dung nào. **Cổ điển**: gửi tất cả thành một khối ở đầu như trước bản 3.3.0. Chat nhóm luôn dùng Cổ điển |
 | Hiện chỉ số đã ghim phía trên ô chat | ON | HUD (chỉ hiện khi có chỉ số được ghim) |
 | Heuristic parser | OFF | Fallback dò câu đơn giản ("take 12 damage") khi model quên protocol (dễ false positive) |
 | Record stat history | ON | Dữ liệu sparkline + chart |
