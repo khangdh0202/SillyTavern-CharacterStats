@@ -52,8 +52,9 @@ Có **2 lớp dữ liệu** — hiểu 2 lớp này là hiểu 90% cách extensi
 
 1. Cài: trong SillyTavern mở panel **Extensions** → bấm **Install extension**, dán `https://github.com/khangdh0202/SillyTavern-CharacterStats` và cài (cho riêng user này hoặc tất cả). Cách thủ công: copy repo vào `data/<user-handle>/extensions/` hoặc `public/scripts/extensions/third-party/`, rồi reload SillyTavern.
 2. Mở chat bất kỳ — nút sheet hiện phía trên ô nhập tin.
-3. Card chưa có sheet? Tự dựng bằng editor (**Sửa ▸ Sửa mặc định của card (chat mới)**) hoặc dùng AI Sheet Designer (mục 14).
-4. Chơi. AI giờ đọc trạng thái mỗi lượt và tự cập nhật — mỗi thay đổi hiện thành thẻ nhỏ trong chat.
+3. Truyện mới? Mở sheet và chọn **Thiết lập câu chuyện** (tự gợi ý một lần trong chat chưa có sheet, lúc nào cũng có trong **Thế giới ▾**). Chọn thể loại, chọn sheet cho {{user}}, nhân vật và side NPC (hoặc giữ nguyên / bỏ qua), xem lại rồi bấm **Bắt đầu**. Chỉ ghi vào chat này: không đổi Character Card hay cài đặt nào, và có snapshot trước để hoàn tác.
+4. Hoặc, card chưa có sheet thì tự dựng bằng editor (**Sửa ▸ Sửa mặc định của card (chat mới)**) hoặc dùng AI Sheet Designer (mục 14).
+5. Chơi. AI giờ đọc trạng thái mỗi lượt và tự cập nhật — mỗi thay đổi hiện thành thẻ nhỏ trong chat.
 
 ## 3. Giao diện sheet
 
@@ -64,8 +65,8 @@ Mở sheet bằng nút **Character Sheet** phía trên ô nhập, mục trong me
 | 🕐 đồng hồ | Đồng hồ game: xem, sửa tay, pause |
 | **Sửa ▾** | *State của chat này* (giá trị, định nghĩa, skills, items, custom text) hoặc *Mặc định của card* (cho chat mới; chat hiện tại không đổi) |
 | **Lịch sử ▾** | Nhật ký thay đổi (xuất JSON/CSV), dòng thời gian, snapshot, chụp snapshot ngay |
-| **Thế giới ▾** | Tổng quan thế giới, cảnh, thêm NPC phụ, tạo sheet {{user}} (một lần) |
-| **⋯** | Copy / paste schema, preset, component · ghi chat này thành mặc định card, reset chat từ card, gộp Mod vào Base · ước tính token · cài đặt |
+| **Thế giới ▾** | Thiết lập câu chuyện, tổng quan thế giới, cảnh, thêm NPC phụ, tạo sheet {{user}} (một lần) |
+| **⋯** | Copy / paste schema, preset, component · ghi chat này thành mặc định card, reset chat từ card, gộp Mod vào Base · ước tính token · chuyển Đơn giản / Nâng cao · cài đặt |
 | ✕ | Đóng (hoặc nhấn **Esc**) |
 
 Nội dung chia thành tab có đếm số: **Chỉ số · Hiệu ứng · Kỹ năng · Túi đồ · Quan hệ · Tuỳ chỉnh**.
@@ -80,6 +81,8 @@ Nội dung chia thành tab có đếm số: **Chỉ số · Hiệu ứng · Kỹ
 Trong **chế độ sửa** cũng có các tab trên (trừ Hiệu ứng và Quan hệ), cộng thêm: thêm/sửa/xoá từng stat, **🗑 Clear All** (xoá mọi hàng stat — nhớ bấm **Lưu**), kéo thả ☷ sắp xếp, ⤒/⤓ chèn trên/dưới, ▣ Select chọn nhiều field để copy. Thoát khi còn thay đổi chưa lưu (Esc hoặc bấm ra ngoài) sẽ được hỏi lại.
 
 Trên điện thoại, sheet chiếm toàn màn hình, menu mở từ dưới lên và hàng trong trình sửa xếp dọc.
+
+**Đơn giản và Nâng cao.** Cài mới sẽ ở chế độ **Đơn giản**, ẩn các điều khiển chuyên sâu: sửa card và mọi thao tác ghi card, copy / paste schema và field, component, trigger và đồng bộ custom trong form chỉ số, meta field, cảnh, tab Quan hệ, nhật ký thay đổi và timeline, ước lượng token, khôi phục và công cụ gộp Mod→Base. Những thứ còn lại vẫn có: các tab của sheet, ✎ sửa chat này, chỉnh nhanh và ★ ghim, HUD, đồng hồ, thẻ sự kiện, đèn sức khoẻ model, Thiết lập câu chuyện, preset, snapshot và Settings. Không tắt gì cả: trigger, cảnh và quan hệ đã có trong chat vẫn chạy, và sheet báo một dòng. Chuyển bằng **⋯ ▸ Chuyển sang chế độ Nâng cao** (hoặc link ở chân sheet) hoặc trong Settings. Nếu bạn đã dùng Character State trước bản 3.5.0, bạn vẫn ở Nâng cao.
 
 ## 4. Stats chi tiết
 
@@ -268,6 +271,7 @@ Stat number có sparkline trên sheet; click mở chart lớn (lưới, nhãn tr
 | Setting | Mặc định | Ý nghĩa |
 | --- | --- | --- |
 | Ngôn ngữ giao diện | English | Tự động (theo SillyTavern) / English / Tiếng Việt |
+| **Giao diện** | Đơn giản (cài mới) / Nâng cao (người đang dùng) | **Đơn giản** ẩn các điều khiển chuyên sâu (mục 3); **Nâng cao** hiện tất cả. Không chế độ nào tắt tính năng |
 | **Mức chi tiết của prompt** | Chuẩn | **Tối đa** cho model thấy tới 40.000 ký tự custom data (Chuẩn: 8.000) và luôn gửi đầy đủ mọi thành viên nhóm — lựa chọn để AI hiểu nhiều nhất khi không ngại token đầu vào |
 | **Bộ tool** | Gọn | **Gọn**: không đưa tool cũ `UpdateCharacterState` (đã được `state_update` bao trọn), mỗi request bớt một tool. **Đầy đủ**: đưa mọi tool như trước bản 3.4.0 |
 | **Đèn sức khoẻ model** | BẬT | Một chấm trên nút Character Sheet: xanh khi model tuân giao thức cập nhật, vàng khi vài lượt trong 20 lượt gần nhất có lỗi, đỏ khi model liên tục làm sai (marker `[CSEVENT]` giả, viết tool call thành chữ, JSON hỏng, khối cập nhật bị cắt, sai tên chỉ số hoặc tên nhân vật). Khi chuyển sang đỏ sẽ có một thông báo. Bấm vào chấm để xem tên model, số lần từng loại lỗi, gợi ý, và nút **Đối chiếu lại sheet**: điền sẵn một yêu cầu vào ô chat để bạn đọc lại rồi tự gửi. Lượt không đổi chỉ số không tính là lỗi |

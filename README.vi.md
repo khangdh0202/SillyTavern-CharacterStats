@@ -57,6 +57,7 @@ Bạn chơi truyện. Extension lo phần sổ sách.
 - 🩹 **Protocol tự chữa lành** — output bị cắt, JSON hỏng, tag bịa lung tung, thiếu tag đóng: được cứu, sửa, hoặc chặn kèm "bài học" cho model — không bao giờ âm thầm áp bừa.
 - 🧠 **Tiết kiệm token** — chế độ xem state gọn, tóm tắt lười cho group, đọc sâu theo yêu cầu. Sheet lớn vẫn rẻ.
 - 📱 **Gọn trên máy tính lẫn điện thoại** — sheet chia tab, header sáu nút, ô lọc chỉ số, chạm để xem chi tiết, toàn màn hình trên điện thoại, Esc để đóng, giao diện English / Tiếng Việt.
+- 🌱 **Dễ bắt đầu** — chế độ Đơn giản cho người mới (ẩn điều khiển chuyên sâu, không tắt gì) và **Thiết lập câu chuyện**: chọn thể loại rồi tạo sheet cho mọi người trong chat qua ba bước, không đụng tới card.
 - 🧭 **Tiện khi chơi** — chỉnh nhanh ±, ★ ghim chỉ số kèm HUD phía trên ô chat, tab quan hệ, hộp chỉnh đồng hồ thật (ngày/giờ, ngủ, tạm dừng, lịch), một màn Lịch sử, xuất/nhập cấu hình, và chế độ prompt *Tối đa* để AI hiểu nhiều nhất.
 - 🎛 **Theo ý bạn** — preset dựng sẵn cho 10 thể loại (fantasy, hệ thống, tu tiên, sinh tồn, tình cảm…), preset riêng, component tái sử dụng, copy/paste từng field giữa các nhân vật, chế độ hiển thị custom, ẩn field khỏi prompt.
 

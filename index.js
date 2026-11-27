@@ -15315,9 +15315,14 @@ async function pasteOverlaySchemaValues(character, schema, addMissing = false) {
     return resultRuntime;
 }
 
-async function pasteCharacterSchema(character, mode = "replace", sourceText = null) {
+/* v3.5.0 options (defaults = the behavior before): writeCard false keeps
+   a card character's paste in THIS chat only (Story Setup);
+   safetySnapshot false when the caller took one snapshot for a batch.
+   Only the "replace" path writes a card, so only it reads writeCard. */
+async function pasteCharacterSchema(character, mode = "replace", sourceText = null, options = {}) {
     const context = SillyTavern.getContext();
     if (!character) throw new Error("No character selected.");
+    const { writeCard = true, safetySnapshot = true } = options || {};
 
     /* v3: callers with their own schema (preset load) pass it directly —
        the user's clipboard is never overwritten behind their back. */
@@ -15326,7 +15331,7 @@ async function pasteCharacterSchema(character, mode = "replace", sourceText = nu
 
     /* Safety net (v2.0.23): a wrong paste is one click — the snapshot
        makes it one more click to undo via the Snapshots UI. */
-    takeSafetySnapshot(context, "paste schema (" + mode + ") -> " + (character?.name || "?"));
+    if (safetySnapshot) takeSafetySnapshot(context, "paste schema (" + mode + ") -> " + (character?.name || "?"));
 
     if (mode === "overlay" || mode === "merge") {
         return pasteOverlaySchemaValues(character, schema, mode === "merge");
@@ -15462,7 +15467,7 @@ async function pasteCharacterSchema(character, mode = "replace", sourceText = nu
 
     pushWholeAudit(context, stateKey, "manual", "paste");
 
-    if (!noCard) {
+    if (!noCard && writeCard) {
         setCardStateData(character, startingState);
 
         await saveChatState(context);
@@ -18273,6 +18278,27 @@ async function openCharacterSheet(mode = "view", targetCharacter = null) {
             </div>`;
     }
 
+    /* v3.5.0: the Story Setup offer (once per chat load) and, in Simple,
+       one line when this chat holds data only Advanced shows */
+    if (mode === "view" && shouldSuggestStorySetup(context)) {
+        markStorySetupSuggested(context);
+        hintNoteHtml += `
+            <div class="cs-hint-note cs-story-suggest">
+                <span>${csH("New story? Story Setup gives everyone a sheet for a genre in three steps.")}</span>
+                <button class="cs-link-btn" id="cs-story-suggest-open-btn" type="button">${csIcon("book-open")} ${csH("Set up")}</button>
+                <button class="cs-link-btn" id="cs-story-suggest-later-btn" type="button">${csH("Not now")}</button>
+                <button class="cs-link-btn" id="cs-story-suggest-never-btn" type="button">✕ ${csH("Don't ask again")}</button>
+            </div>`;
+    }
+
+    if (mode === "view" && !isAdvancedUi() && chatHasAdvancedData(context)) {
+        hintNoteHtml += `
+            <div class="cs-hint-note cs-ui-advanced-note">
+                <span>${csH("This chat has advanced data (scenes, relations, triggers…). It keeps working; switch to Advanced to see it.")}</span>
+                <button class="cs-link-btn" id="cs-ui-advanced-note-btn" type="button">${csH("Show Advanced")}</button>
+            </div>`;
+    }
+
     const activeEffectCount = isEditing ? 0 : getActiveEffects(state).length;
     const sheetTabs = [
         { key: "stats", icon: "chart-simple", label: csT("Stats"), count: Object.keys(state.stats || {}).length },
@@ -18288,7 +18314,7 @@ async function openCharacterSheet(mode = "view", targetCharacter = null) {
         { key: "custom", icon: "code", label: csT("Custom") }
     ].filter(Boolean);
 
-    const activeTab = sheetTabs.some(tab => tab.key === sheetUiMemory.tab) ? sheetUiMemory.tab : "stats";
+    const activeTab = sheetTabs.some(tab => tab.key === sheetUiMemory.tab && !isTabHiddenInUi(tab.key)) ? sheetUiMemory.tab : "stats";
 
     /* v3.1 P5: a big custom tree (thousands of nodes, ~0.9 MB HTML) is only
        rendered when its tab is opened. Small ones stay eager. */
@@ -18382,7 +18408,7 @@ async function openCharacterSheet(mode = "view", targetCharacter = null) {
                 ${mode === "view"
                     ? `<span class="cs-footer-note">${csIcon("circle-check")} ${escapeHtml(isUser || isSideNpcSheet ? csT("This chat") : csT("Chat runtime state"))} · ${escapeHtml(csT("Saved automatically"))}</span>
                        <span class="cs-footer-hint"><kbd>Esc</kbd> ${escapeHtml(csT("Esc to close").replace(/^Esc\s*/, ""))}</span>
-                       <button class="cs-close-button" id="cs-close-btn" type="button">${escapeHtml(csT("Close"))}</button>`
+                       ${isAdvancedUi() ? "" : `<button class="cs-link-btn cs-ui-mode-footer" id="cs-ui-mode-footer-btn" type="button">${csIcon("sliders")} ${csH("Simple mode · show Advanced")}</button>`}<button class="cs-close-button" id="cs-close-btn" type="button">${escapeHtml(csT("Close"))}</button>`
                     : `<div class="cs-edit-footer">
                         <button class="cs-cancel-button" id="cs-cancel-btn" type="button">${escapeHtml(csT("Cancel"))}</button>
                         <button class="cs-save-button" id="cs-save-btn" type="button">${saveButtonLabel}</button>
@@ -18478,6 +18504,28 @@ async function openCharacterSheet(mode = "view", targetCharacter = null) {
         document.getElementById("cs-settings-btn")?.addEventListener("click", () => {
             openSettingsOverlay();
         });
+
+        /* v3.5.0: Story Setup + Simple / Advanced switches */
+        for (const id of ["cs-story-setup-btn", "cs-story-suggest-open-btn"]) {
+            document.getElementById(id)?.addEventListener("click", () => {
+                void openStorySetupWizard();
+            });
+        }
+
+        document.getElementById("cs-story-suggest-later-btn")?.addEventListener("click", event => {
+            event.target.closest?.(".cs-story-suggest")?.remove();
+        });
+
+        document.getElementById("cs-story-suggest-never-btn")?.addEventListener("click", async event => {
+            event.target.closest?.(".cs-story-suggest")?.remove();
+            await declineStorySetup(context);
+        });
+
+        for (const id of ["cs-ui-mode-btn", "cs-ui-mode-footer-btn", "cs-ui-advanced-note-btn"]) {
+            document.getElementById(id)?.addEventListener("click", () => {
+                setUiMode(id === "cs-ui-mode-btn" && isAdvancedUi() ? "simple" : "advanced");
+            });
+        }
 
         document.getElementById("cs-token-btn")?.addEventListener("click", () => {
             const estimate = buildTokenSummaryEstimate();
@@ -19359,6 +19407,7 @@ function renderSheetHeaderActions(options) {
     ];
 
     const worldItems = [
+        canHostUser ? renderMenuItem({ id: "cs-story-setup-btn", icon: "book-open", label: csT("Story Setup…") }) : "",
         renderMenuItem({ id: "cs-world-btn", icon: "earth-asia", label: csT("World overview") }),
         renderMenuItem({ id: "cs-scenes-btn", icon: "clapperboard", label: csT("Scenes") }),
         canHostUser ? renderMenuItem({ id: "cs-side-npc-btn", icon: "user-plus", label: csT("Add side NPC") }) : "",
@@ -19407,6 +19456,11 @@ function renderSheetHeaderActions(options) {
         }));
     }
 
+    moreItems.push(renderMenuItem({
+        id: "cs-ui-mode-btn",
+        icon: "sliders",
+        label: isAdvancedUi() ? csT("Switch to Simple mode") : csT("Switch to Advanced mode")
+    }));
     moreItems.push(renderMenuItem({ id: "cs-settings-btn", icon: "gear", label: csT("Settings") }));
 
     return [
@@ -19551,6 +19605,11 @@ function renderStatsEmptyState(isUser, isSideNpc) {
             <div class="cs-onboarding-title">${escapeHtml(csT("This sheet has no stats yet"))}</div>
             <div class="cs-onboarding-sub">${escapeHtml(csT("Pick one way to build it:"))}</div>
             <div class="cs-onboarding-options">
+                <button class="cs-onboarding-option" type="button" data-cs-onboard="story">
+                    ${csIcon("book-open")}
+                    <b>${escapeHtml(csT("Story Setup"))}</b>
+                    <span>${escapeHtml(csT("Pick a genre and give everyone in this chat a sheet in three steps."))}</span>
+                </button>
                 <button class="cs-onboarding-option" type="button" data-cs-onboard="presets">
                     ${csIcon("bookmark")}
                     <b>${escapeHtml(csT("Start from a genre preset"))}</b>
@@ -19942,6 +20001,21 @@ globalThis.__csFeaturesForTests = {
     /* v3.4.0 */
     computeModelHealth: (...args) => computeModelHealth(...args),
     openModelHealthPanel: () => openModelHealthPanel(),
+    /* v3.5.0 */
+    ensureUiModeSetting: () => ensureUiModeSetting(),
+    isAdvancedUi: () => isAdvancedUi(),
+    setUiMode: mode => setUiMode(mode),
+    advancedOnlySelectors: () => [...CS_ADVANCED_ONLY_SELECTORS],
+    uiModeCss: () => buildUiModeCss(),
+    chatHasAdvancedData: context => chatHasAdvancedData(context),
+    shouldSuggestStorySetup: context => shouldSuggestStorySetup(context),
+    declineStorySetup: context => declineStorySetup(context),
+    listStorySetupGenres: () => listStorySetupGenres(),
+    listStorySetupEntities: context => listStorySetupEntities(context),
+    applyStorySetup: (genreId, rows, context) => applyStorySetup(genreId, rows, context),
+    openStorySetupWizard: () => openStorySetupWizard(),
+    renderSheetHeaderActions: options => renderSheetHeaderActions(options),
+    renderStatsEmptyState: (isUser, isSideNpc) => renderStatsEmptyState(isUser, isSideNpc),
     fillReconcileRequest: () => fillReconcileRequest(),
     buildReconcileRequestText: () => buildReconcileRequestText()
 };
@@ -20317,6 +20391,10 @@ function wireSheetChrome(overlay) {
         }
 
         const onboard = event.target.closest?.("[data-cs-onboard]");
+        if (onboard?.dataset.csOnboard === "story") {
+            void openStorySetupWizard();
+            return;
+        }
         if (onboard) {
             const target = {
                 card: "cs-edit-card-btn",
@@ -23604,7 +23682,48 @@ const CS_VI = {
     "Rules / notes (free text)": "Luật / ghi chú (văn bản tự do)",
     "Custom data (JSON) — the fields the AI tracks": "Dữ liệu custom (JSON) — các trường AI theo dõi",
     "Custom data JSON is invalid — fix it before saving. Nothing was changed.": "JSON dữ liệu custom bị lỗi — sửa lại rồi mới lưu. Chưa có gì thay đổi.",
-    "Custom data must be a JSON object { ... }. Nothing was changed.": "Dữ liệu custom phải là một object JSON { ... }. Chưa có gì thay đổi."
+    "Custom data must be a JSON object { ... }. Nothing was changed.": "Dữ liệu custom phải là một object JSON { ... }. Chưa có gì thay đổi.",
+    /* v3.5.0 — Simple / Advanced + Story Setup */
+    "Interface": "Giao diện",
+    "Simple": "Đơn giản",
+    "Advanced": "Nâng cao",
+    "Simple hides the expert controls (card editing, schema and field copy, components, triggers, scenes, relations, change log). Nothing is switched off: everything keeps working in the background.": "Đơn giản ẩn các điều khiển chuyên sâu (sửa card, copy schema và field, component, trigger, cảnh, quan hệ, nhật ký thay đổi). Không tắt gì cả: mọi thứ vẫn chạy nền.",
+    "Switch to Simple mode": "Chuyển sang chế độ Đơn giản",
+    "Switch to Advanced mode": "Chuyển sang chế độ Nâng cao",
+    "Simple mode · show Advanced": "Chế độ Đơn giản · bật Nâng cao",
+    "This chat has advanced data (scenes, relations, triggers…). It keeps working; switch to Advanced to see it.": "Chat này có dữ liệu nâng cao (cảnh, quan hệ, trigger…). Nó vẫn hoạt động; bật Nâng cao để xem.",
+    "Show Advanced": "Bật Nâng cao",
+    "Story Setup": "Thiết lập câu chuyện",
+    "Story Setup…": "Thiết lập câu chuyện…",
+    "Pick a genre and give everyone in this chat a sheet in three steps.": "Chọn thể loại và tạo sheet cho mọi người trong chat này qua ba bước.",
+    "New story? Story Setup gives everyone a sheet for a genre in three steps.": "Truyện mới? Thiết lập câu chuyện tạo sheet theo thể loại cho mọi người qua ba bước.",
+    "Set up": "Thiết lập",
+    "Not now": "Để sau",
+    "Don't ask again": "Không hỏi lại",
+    "Open a character or group chat first.": "Hãy mở một chat nhân vật hoặc nhóm trước.",
+    "Your preset": "Preset của bạn",
+    "This preset": "Preset này",
+    "Keep the current sheet": "Giữ sheet hiện tại",
+    "Skip": "Bỏ qua",
+    "This chat was set up before ({genre}). Running it again only changes the entities you pick.": "Chat này đã được thiết lập trước đây ({genre}). Chạy lại chỉ đổi những thực thể bạn chọn.",
+    "Choose the sheet each one gets. Existing sheets are kept unless you pick another one.": "Chọn sheet cho từng người. Sheet đang có được giữ nguyên trừ khi bạn chọn bản khác.",
+    "has a sheet · {n} stats": "đã có sheet · {n} chỉ số",
+    "no sheet yet": "chưa có sheet",
+    "replace the sheet with {variant} ({n} stats)": "thay sheet bằng {variant} ({n} chỉ số)",
+    "new sheet: {variant} ({n} stats)": "sheet mới: {variant} ({n} chỉ số)",
+    "Pinned above the chat input: {stats} ({who})": "Ghim phía trên ô chat: {stats} ({who})",
+    "Game clock: {time} (unchanged). Only this chat changes: no Character Card and no setting is touched.": "Đồng hồ: {time} (không đổi). Chỉ chat này thay đổi: không đụng tới Character Card hay cài đặt nào.",
+    "A snapshot is taken first: undo with History ▸ Snapshots.": "Một snapshot được tạo trước: hoàn tác bằng Lịch sử ▸ Snapshot.",
+    "Nothing to do: every entity is kept or skipped.": "Không có gì để làm: mọi thực thể đều được giữ nguyên hoặc bỏ qua.",
+    "Step {n} of 3": "Bước {n} / 3",
+    "Pick a genre": "Chọn thể loại",
+    "Who gets which sheet": "Ai nhận sheet nào",
+    "Review and start": "Xem lại và bắt đầu",
+    "Back": "Quay lại",
+    "Next": "Tiếp",
+    "Start": "Bắt đầu",
+    "Nothing was set up.": "Chưa thiết lập được gì.",
+    "Story set up: {n} sheet(s) ready.": "Đã thiết lập câu chuyện: {n} sheet sẵn sàng."
 };
 
 function getCsLanguage() {
@@ -23726,7 +23845,8 @@ const CS_FORM_OVERLAY_IDS = new Set([
     "cs-custom-meta-overlay",
     "cs-side-npc-modal-overlay",
     "cs-field-paste-overlay",
-    "cs-clock-overlay"
+    "cs-clock-overlay",
+    "cs-story-setup-overlay"
 ]);
 
 const CS_FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -24109,6 +24229,10 @@ const DEFAULT_SETTINGS = {
        the duplicate UpdateCharacterState tool is not offered */
     modelHealth: true,
     toolSet: "lean",
+    /* v3.5.0: "simple" hides the expert controls (nothing is switched
+       off). The first run writes the real value: new install → simple,
+       existing user → advanced (ensureUiModeSetting). */
+    uiMode: "advanced",
     hudEnabled: true,
     eventCardsExpanded: false,
     eventCardSnapshotRow: false
@@ -24223,6 +24347,534 @@ async function importConfigFromText(text) {
     return true;
 }
 
+/* =========================================================
+   v3.5.0 — UI MODE (Simple / Advanced)
+   A global setting. Simple only HIDES controls: every feature keeps
+   running in the background (triggers, scenes, relations, sync…), so
+   switching back and forth loses nothing. ONE source decides what is
+   hidden: CS_ADVANCED_ONLY_SELECTORS → one generated CSS rule, active
+   while <body> carries the class cs-ui-simple. Advanced renders the
+   v3.4.0 markup unchanged.
+========================================================= */
+
+const CS_UI_SIMPLE_CLASS = "cs-ui-simple";
+const CS_UI_MODE_STYLE_ID = "cs-ui-mode-style";
+
+/* Sheet tabs hidden in Simple (their panels too). */
+const CS_ADVANCED_ONLY_TABS = ["relations"];
+
+const CS_ADVANCED_ONLY_SELECTORS = [
+    /* sheet menus — card writes, schema tools, components, audit, scenes */
+    "#cs-edit-card-btn",
+    "#cs-log-btn",
+    "#cs-timeline-btn",
+    "#cs-scenes-btn",
+    "#cs-copy-btn",
+    "#cs-paste-btn",
+    "#cs-components-btn",
+    "#cs-reset-user-btn",
+    "#cs-push-btn",
+    "#cs-reset-btn",
+    "#cs-recover-defaults-btn",
+    "#cs-mod-to-base-all-btn",
+    "#cs-mod-to-base-toggle",
+    "#cs-token-btn",
+    /* the short Simple menus need no headings / separators */
+    ".cs-menu-popover .cs-menu-heading",
+    ".cs-menu-popover .cs-menu-sep",
+    /* sheet body */
+    ...CS_ADVANCED_ONLY_TABS.flatMap(tab => [`[data-cs-tab="${tab}"]`, `[data-cs-tab-panel="${tab}"]`]),
+    '[data-cs-onboard="card"]',
+    '[data-cs-onboard="paste"]',
+    "#cs-custom-meta-btn",
+    ".cs-fold-dot",
+    ".cs-fold-col",
+    ".cs-mod-to-base-row-btn",
+    /* ✎ Chat editor — field copy / components / fold */
+    "#cs-stat-select-toggle",
+    "#cs-copy-selected",
+    "#cs-save-selection-component",
+    "#cs-apply-all-mod-to-base",
+    ".cs-copy-stat",
+    ".cs-mod-to-base-edit",
+    /* stat form — triggers + custom sync */
+    ".cs-form-advanced",
+    /* world overview — scene switch */
+    "[data-cs-world-activate]"
+];
+
+function isAdvancedUi(settings = getExtensionSettings()) {
+    return settings?.uiMode !== "simple";
+}
+
+function isTabHiddenInUi(tabKey) {
+    return !isAdvancedUi() && CS_ADVANCED_ONLY_TABS.includes(tabKey);
+}
+
+function buildUiModeCss() {
+    return `body.${CS_UI_SIMPLE_CLASS} :is(${CS_ADVANCED_ONLY_SELECTORS.join(", ")}) { display: none !important; }`;
+}
+
+function applyUiModeClass() {
+    const simple = !isAdvancedUi();
+
+    try {
+        if (typeof document?.getElementById === "function" && !document.getElementById(CS_UI_MODE_STYLE_ID)) {
+            const style = document.createElement("style");
+            style.id = CS_UI_MODE_STYLE_ID;
+            style.textContent = buildUiModeCss();
+            document.head?.appendChild(style);
+        }
+
+        document.body?.classList?.toggle(CS_UI_SIMPLE_CLASS, simple);
+    } catch {
+        /* no DOM yet — the next call applies it */
+    }
+
+    return simple;
+}
+
+/* Owner decision 3: a new install starts in Simple, an existing user keeps
+   Advanced. "Existing" = this browser already stores Character State data
+   from an earlier version (settings, presets, components, user template,
+   built-in preset fold). The choice is written once, so it never flips. */
+function ensureUiModeSetting() {
+    try {
+        const storage = globalThis.localStorage;
+        if (!storage) return null;
+
+        const raw = storage.getItem(SETTINGS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        const stored = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+
+        if (stored?.uiMode === "simple" || stored?.uiMode === "advanced") return stored.uiMode;
+
+        const existingUser = Boolean(raw) || [
+            PRESET_STORAGE_KEY,
+            COMPONENTS_STORAGE_KEY,
+            USER_TEMPLATE_STORAGE_KEY,
+            BUILTIN_PRESETS_OPEN_KEY
+        ].some(key => storage.getItem(key) !== null);
+
+        const uiMode = existingUser ? "advanced" : "simple";
+        storage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ ...(stored || {}), uiMode }));
+        return uiMode;
+    } catch {
+        /* storage blocked or damaged — DEFAULT_SETTINGS (Advanced) applies */
+        return null;
+    }
+}
+
+function setUiMode(mode) {
+    saveExtensionSettings({ uiMode: mode === "simple" ? "simple" : "advanced" });
+    applyUiModeClass();
+
+    const sheet = document.getElementById("character-state-overlay");
+    if (sheet && sheet.dataset.mode === "view") void reopenCharacterSheet(sheet, "view", sheet._character);
+}
+
+/* Data that only Advanced shows. Simple keeps running it; the sheet says
+   so in one line. */
+function chatHasAdvancedData(context = SillyTavern.getContext()) {
+    const meta = context?.chatMetadata;
+    if (!meta) return false;
+
+    if (listScenes(context).length) return true;
+    if (getRelationships(context).length) return true;
+
+    const fieldMeta = meta[CUSTOM_META_KEY];
+    if (fieldMeta && typeof fieldMeta === "object" && Object.keys(fieldMeta).length) return true;
+
+    const states = meta.character_states;
+    if (!states || typeof states !== "object") return false;
+
+    return Object.values(states).some(state =>
+        state && typeof state === "object" && Object.values(state.stats || {}).some(stat =>
+            (Array.isArray(stat?.triggers) && stat.triggers.length > 0) ||
+            (Array.isArray(stat?.syncCustom) && stat.syncCustom.length > 0)));
+}
+
+/* =========================================================
+   v3.5.0 — STORY SETUP (per chat)
+   Pick a genre → choose which sheet each entity of the chat gets →
+   review → Start. Writes ONLY this chat (runtime states, HUD pins,
+   one record); never a card, never a global setting. Sheets go through
+   the normal preset path (pasteCharacterSchema, "replace") with the
+   card write turned off; one safety snapshot is taken first.
+========================================================= */
+
+const STORY_SETUP_KEY = "character_state_story_setup";
+const STORY_SETUP_PIN_COUNT = 3;
+const storySetupSuggested = new WeakSet();
+
+function getStorySetupRecord(context = SillyTavern.getContext()) {
+    const record = context?.chatMetadata?.[STORY_SETUP_KEY];
+    return record && typeof record === "object" && !Array.isArray(record) ? record : null;
+}
+
+function canRunStorySetup(context = SillyTavern.getContext()) {
+    return Boolean(context?.chatMetadata) && Boolean(context.groupId || resolveActiveCharacter());
+}
+
+/* scenes are not sheets */
+function chatHasAnySheet(context = SillyTavern.getContext()) {
+    const states = context?.chatMetadata?.character_states;
+    if (!states || typeof states !== "object") return false;
+
+    return Object.entries(states).some(([key, state]) =>
+        !key.startsWith("scene:") && state && typeof state === "object" &&
+        Object.keys(state.stats || {}).length > 0);
+}
+
+/* Offered once per chat load, only in a chat without any sheet that was
+   never set up and where the user did not say "Don't ask again". */
+function shouldSuggestStorySetup(context = SillyTavern.getContext()) {
+    if (!canRunStorySetup(context) || getStorySetupRecord(context) || chatHasAnySheet(context)) return false;
+    return !storySetupSuggested.has(context.chatMetadata);
+}
+
+function markStorySetupSuggested(context = SillyTavern.getContext()) {
+    if (context?.chatMetadata) storySetupSuggested.add(context.chatMetadata);
+}
+
+async function declineStorySetup(context = SillyTavern.getContext()) {
+    if (!context?.chatMetadata || getStorySetupRecord(context)) return false;
+
+    context.chatMetadata[STORY_SETUP_KEY] = { declined: true, declinedAt: Date.now() };
+    await saveChatState(context);
+    return true;
+}
+
+/* Built-in genres (with the variants each really has) + the user's own
+   presets (one schema each). */
+function listStorySetupGenres() {
+    const builtins = getBuiltinPresetGenres().map(genre => ({
+        id: `builtin:${genre.id}`,
+        icon: genre.icon,
+        name: csT(genre.name),
+        description: csT(genre.description),
+        variants: BUILTIN_PRESET_VARIANTS
+            .filter(variant => Array.isArray(genre[variant.id]?.stats))
+            .map(variant => ({ id: variant.id, label: csT(variant.label), statCount: genre[variant.id].stats.length }))
+    }));
+
+    const own = presetStoreRead()
+        .filter(preset => preset?.id && preset.schema)
+        .map(preset => ({
+            id: `preset:${preset.id}`,
+            icon: "🔖",
+            name: String(preset.name || csT("Unnamed")),
+            description: csT("Your preset"),
+            variants: [{
+                id: "preset",
+                label: csT("This preset"),
+                statCount: Object.keys(preset.schema?.startingState?.stats || {}).length
+            }]
+        }));
+
+    return [...builtins, ...own];
+}
+
+function buildStorySetupSchema(genreId, variantId) {
+    const text = String(genreId || "");
+    const split = text.indexOf(":");
+    const kind = split > 0 ? text.slice(0, split) : "";
+    const id = split > 0 ? text.slice(split + 1) : "";
+
+    if (kind === "builtin") return buildBuiltinPresetSchema(id, variantId);
+
+    if (kind === "preset" && variantId === "preset") {
+        const preset = presetStoreRead().find(item => item?.id === id);
+        return preset?.schema ? structuredClone(preset.schema) : null;
+    }
+
+    return null;
+}
+
+/* {{user}}, the character / group members, the side NPCs of this chat. */
+async function listStorySetupEntities(context = SillyTavern.getContext()) {
+    const states = context?.chatMetadata?.character_states || {};
+    const statCountOf = key => Object.keys(states?.[key]?.stats || {}).length;
+    const entities = [{ key: USER_STATE_KEY, entity: makeUserEntity(), name: userDisplayName(), kind: "user" }];
+
+    const base = context?.groupId ? getGroupCharacters(context) : [resolveActiveCharacter()].filter(Boolean);
+    const hydrated = await ensureCharactersLoaded(base);
+
+    for (const character of (hydrated || []).filter(Boolean)) {
+        const key = getStateEntityKey(character);
+        if (key && !entities.some(item => item.key === key)) {
+            entities.push({ key, entity: character, name: character.name || key, kind: "character" });
+        }
+    }
+
+    for (const entry of listSideNpcs(context)) {
+        if (!entities.some(item => item.key === entry.key)) {
+            entities.push({ key: entry.key, entity: makeSideNpcEntity(entry), name: entry.name, kind: "sideNpc" });
+        }
+    }
+
+    return entities.map(item => ({ ...item, statCount: statCountOf(item.key) }));
+}
+
+/* Guess: {{user}} = protagonist, cast = companion, side NPC = minor; an
+   entity that already has a sheet keeps it unless the user picks one. */
+function guessStorySetupChoice(entity, genre) {
+    if (entity.statCount > 0) return "keep";
+
+    const has = id => Boolean(genre?.variants?.some(variant => variant.id === id));
+
+    if (has("preset")) return entity.kind === "sideNpc" ? "skip" : "preset";
+
+    const wanted = { user: "main", character: "companion", sideNpc: "minor" }[entity.kind];
+    return has(wanted) ? wanted : "skip";
+}
+
+function pickStorySetupPins(state) {
+    return Object.entries(state?.stats || {})
+        .filter(([, stat]) => stat?.type === "number" && stat.progressBar?.enabled)
+        .map(([name]) => name)
+        .slice(0, STORY_SETUP_PIN_COUNT);
+}
+
+/* rows: [{ key, entity, name, choice }] — choice "keep" | "skip" | variant id */
+async function applyStorySetup(genreId, rows, context = SillyTavern.getContext()) {
+    const genre = listStorySetupGenres().find(item => item.id === genreId);
+    const targets = (rows || []).filter(row => row.choice && row.choice !== "keep" && row.choice !== "skip");
+
+    if (!genre || !targets.length || !context?.chatMetadata) return { ok: false, applied: [] };
+
+    takeSafetySnapshot(context, `story setup · ${genre.name}`);
+
+    const applied = [];
+
+    for (const row of targets) {
+        const schema = buildStorySetupSchema(genreId, row.choice);
+        if (!schema) continue;
+
+        await pasteCharacterSchema(row.entity, "replace", JSON.stringify(schema), { writeCard: false, safetySnapshot: false });
+        applied.push(row);
+    }
+
+    /* HUD pins are per chat: pin the bar stats of the protagonist (or the
+       first sheet set up) — only when nothing is pinned for it yet. */
+    const pinRow = applied.find(row => row.key === USER_STATE_KEY) || applied[0];
+
+    if (pinRow && !getPinnedStatNames(context, pinRow.key).length) {
+        const names = pickStorySetupPins(context.chatMetadata.character_states?.[pinRow.key]);
+
+        if (names.length) {
+            if (!context.chatMetadata[PINS_KEY] || typeof context.chatMetadata[PINS_KEY] !== "object") {
+                context.chatMetadata[PINS_KEY] = {};
+            }
+            context.chatMetadata[PINS_KEY][pinRow.key] = names;
+        }
+    }
+
+    context.chatMetadata[STORY_SETUP_KEY] = {
+        genre: genreId,
+        appliedAt: Date.now(),
+        entities: Object.fromEntries((rows || []).map(row => [row.key, row.choice]))
+    };
+
+    await saveChatState(context);
+    refreshCsHud();
+
+    return { ok: applied.length > 0, applied };
+}
+
+async function openStorySetupWizard() {
+    const context = SillyTavern.getContext();
+
+    if (!canRunStorySetup(context)) {
+        csToast.warning("Open a character or group chat first.");
+        return null;
+    }
+
+    markStorySetupSuggested(context);
+    document.getElementById("cs-story-setup-overlay")?.remove();
+
+    const genres = listStorySetupGenres();
+    const entities = await listStorySetupEntities(context);
+    const record = getStorySetupRecord(context);
+    const wizard = { step: 1, genreId: null, rows: [] };
+
+    const overlay = document.createElement("div");
+    overlay.id = "cs-story-setup-overlay";
+    overlay.className = "cs-log-overlay";
+    overlay._wizard = wizard;
+
+    const currentGenre = () => genres.find(genre => genre.id === wizard.genreId) || null;
+    const isTarget = row => row.choice !== "keep" && row.choice !== "skip";
+    const choiceLabel = (genre, choice) => choice === "keep"
+        ? csT("Keep the current sheet")
+        : choice === "skip"
+            ? csT("Skip")
+            : genre?.variants.find(variant => variant.id === choice)?.label || choice;
+
+    const stepGenre = () => `
+        ${record?.genre ? `<div class="cs-settings-hint">${csH("This chat was set up before ({genre}). Running it again only changes the entities you pick.", { genre: genres.find(genre => genre.id === record.genre)?.name || record.genre })}</div>` : ""}
+        <div class="cs-story-genres">
+            ${genres.map(genre => `
+                <button class="cs-onboarding-option cs-story-genre${genre.id === wizard.genreId ? " active" : ""}" type="button" data-cs-story-genre="${escapeHtml(genre.id)}">
+                    <span class="cs-story-genre-icon" aria-hidden="true">${escapeHtml(genre.icon)}</span>
+                    <b>${escapeHtml(genre.name)}</b>
+                    <span>${escapeHtml(genre.description)}</span>
+                </button>`).join("")}
+        </div>`;
+
+    const stepEntities = () => {
+        const genre = currentGenre();
+
+        return `
+            <div class="cs-settings-hint">${csH("Choose the sheet each one gets. Existing sheets are kept unless you pick another one.")}</div>
+            <div class="cs-story-rows">
+                ${wizard.rows.map(row => {
+                    const options = [row.statCount > 0 ? "keep" : "skip", ...genre.variants.map(variant => variant.id)];
+
+                    return `
+                    <div class="cs-story-row">
+                        <span class="cs-story-who">
+                            <b>${escapeHtml(row.kind === "user" ? `${row.name} ({{user}})` : row.name)}</b>
+                            <span class="cs-story-has">${row.statCount > 0 ? csH("has a sheet · {n} stats", { n: row.statCount }) : csH("no sheet yet")}</span>
+                        </span>
+                        <select class="text_pole cs-log-select cs-story-choice" data-cs-story-key="${escapeHtml(row.key)}">
+                            ${options.map(choice => {
+                                const variant = genre.variants.find(item => item.id === choice);
+                                return `<option value="${escapeHtml(choice)}"${choice === row.choice ? " selected" : ""}>${escapeHtml(choiceLabel(genre, choice))}${variant ? ` · ${csH("{n} stats", { n: variant.statCount })}` : ""}</option>`;
+                            }).join("")}
+                        </select>
+                    </div>`;
+                }).join("")}
+            </div>`;
+    };
+
+    const stepReview = () => {
+        const genre = currentGenre();
+        const targets = wizard.rows.filter(isTarget);
+        const pinTarget = targets.find(row => row.key === USER_STATE_KEY) || targets[0];
+        const pins = pinTarget && !getPinnedStatNames(context, pinTarget.key).length
+            ? pickStorySetupPins(buildStorySetupSchema(wizard.genreId, pinTarget.choice)?.runtimeState)
+            : [];
+
+        return `
+            <div class="cs-story-summary">
+                <div class="cs-story-summary-genre"><b>${escapeHtml(genre.icon)} ${escapeHtml(genre.name)}</b></div>
+                <ul>
+                    ${wizard.rows.map(row => {
+                        const variant = genre.variants.find(item => item.id === row.choice);
+                        const action = variant
+                            ? (row.statCount > 0
+                                ? csT("replace the sheet with {variant} ({n} stats)", { variant: variant.label, n: variant.statCount })
+                                : csT("new sheet: {variant} ({n} stats)", { variant: variant.label, n: variant.statCount }))
+                            : choiceLabel(genre, row.choice);
+                        return `<li><b>${escapeHtml(row.name)}</b> — ${escapeHtml(action)}</li>`;
+                    }).join("")}
+                </ul>
+                ${pins.length ? `<div class="cs-settings-hint">${csH("Pinned above the chat input: {stats} ({who})", { stats: pins.join(", "), who: pinTarget.name })}</div>` : ""}
+                <div class="cs-settings-hint">${csH("Game clock: {time} (unchanged). Only this chat changes: no Character Card and no setting is touched.", { time: formatGameTime(getGameTime(context)) })}</div>
+                <div class="cs-settings-hint">${csH("A snapshot is taken first: undo with History ▸ Snapshots.")}</div>
+                ${targets.length ? "" : `<div class="cs-settings-hint cs-story-nothing">${csH("Nothing to do: every entity is kept or skipped.")}</div>`}
+            </div>`;
+    };
+
+    const render = () => {
+        const genre = currentGenre();
+        const hasTargets = wizard.rows.some(isTarget);
+        const body = wizard.step === 1 ? stepGenre() : wizard.step === 2 ? stepEntities() : stepReview();
+        const stepTitle = [csT("Pick a genre"), csT("Who gets which sheet"), csT("Review and start")][wizard.step - 1];
+
+        overlay.innerHTML = `
+            <div class="cs-log-window cs-story-window" style="width:min(640px,94vw);">
+                <div class="cs-log-header">
+                    <div class="cs-log-title">${csIcon("book-open")} ${escapeHtml(csT("Story Setup"))}</div>
+                    <div class="cs-log-subtitle">${csH("Step {n} of 3", { n: wizard.step })} · ${escapeHtml(stepTitle)}${genre && wizard.step > 1 ? ` · ${escapeHtml(genre.name)}` : ""}</div>
+                </div>
+                <div class="cs-log-body" style="padding:12px 16px;">${body}</div>
+                <div class="cs-log-footer">
+                    ${wizard.step > 1 ? `<button class="cs-chip cs-chip-soft" id="cs-story-back-btn" type="button">${csIcon("arrow-left")} ${csH("Back")}</button>` : ""}
+                    ${wizard.step === 2 ? `<button class="cs-chip cs-chip-accent" id="cs-story-next-btn" type="button">${csH("Next")} ${csIcon("arrow-right")}</button>` : ""}
+                    ${wizard.step === 3 ? `<button class="cs-chip cs-chip-accent" id="cs-story-start-btn" type="button"${hasTargets ? "" : " disabled"}>${csIcon("play")} ${csH("Start")}</button>` : ""}
+                    <button class="cs-chip cs-chip-soft" id="cs-story-close-btn" type="button">${csH("Close")}</button>
+                </div>
+            </div>`;
+    };
+
+    const pickGenre = genreId => {
+        const genre = genres.find(item => item.id === genreId);
+        if (!genre) return false;
+
+        wizard.genreId = genre.id;
+        wizard.rows = entities.map(entity => ({ ...entity, choice: guessStorySetupChoice(entity, genre) }));
+        wizard.step = 2;
+        render();
+        return true;
+    };
+
+    const setChoice = (key, choice) => {
+        const row = wizard.rows.find(item => item.key === key);
+        if (row) row.choice = choice;
+        return Boolean(row);
+    };
+
+    const start = async () => {
+        const result = await applyStorySetup(wizard.genreId, wizard.rows, context);
+
+        if (!result.ok) {
+            csToast.warning("Nothing was set up.");
+            return result;
+        }
+
+        overlay.remove();
+        csToast.success(csT("Story set up: {n} sheet(s) ready.", { n: result.applied.length }));
+
+        const first = result.applied.find(row => row.key === USER_STATE_KEY) || result.applied[0];
+        await openCharacterSheet("view", first.entity);
+        return result;
+    };
+
+    /* tests drive the same steps the buttons do */
+    overlay._storySetup = { pickGenre, setChoice, next: () => { wizard.step = 3; render(); }, start };
+
+    render();
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener("change", event => {
+        const select = event.target.closest?.("[data-cs-story-key]");
+        if (select) setChoice(select.dataset.csStoryKey, select.value);
+    });
+
+    overlay.addEventListener("click", async event => {
+        if (event.target === overlay) {
+            overlay.remove();
+            return;
+        }
+
+        const genreButton = event.target.closest?.("[data-cs-story-genre]");
+        if (genreButton) {
+            pickGenre(genreButton.dataset.csStoryGenre);
+            return;
+        }
+
+        const button = event.target.closest?.("button");
+
+        if (button?.id === "cs-story-close-btn") {
+            overlay.remove();
+        } else if (button?.id === "cs-story-back-btn") {
+            wizard.step = Math.max(1, wizard.step - 1);
+            render();
+        } else if (button?.id === "cs-story-next-btn") {
+            wizard.step = 3;
+            render();
+        } else if (button?.id === "cs-story-start-btn") {
+            button.disabled = true;
+            const result = await start();
+            if (!result.ok && button.isConnected) button.disabled = false;
+        }
+    });
+
+    return overlay;
+}
+
 function openSettingsOverlay() {
     document.getElementById("cs-settings-overlay")?.remove();
 
@@ -24256,6 +24908,14 @@ function openSettingsOverlay() {
                         <option value="en" ${settings.uiLanguage === "en" ? "selected" : ""}>English</option>
                         <option value="vi" ${settings.uiLanguage === "vi" ? "selected" : ""}>Tiếng Việt</option>
                     </select>
+                </div>
+                <div class="cs-settings-row">
+                    <label class="cs-settings-label" for="cs-set-ui-mode">${escapeHtml(csT("Interface"))}</label>
+                    <select id="cs-set-ui-mode" class="text_pole cs-log-select" style="width:240px;">
+                        <option value="simple" ${settings.uiMode === "simple" ? "selected" : ""}>${escapeHtml(csT("Simple"))}</option>
+                        <option value="advanced" ${settings.uiMode !== "simple" ? "selected" : ""}>${escapeHtml(csT("Advanced"))}</option>
+                    </select>
+                    <div class="cs-settings-hint">${escapeHtml(csT("Simple hides the expert controls (card editing, schema and field copy, components, triggers, scenes, relations, change log). Nothing is switched off: everything keeps working in the background."))}</div>
                 </div>
                 <div class="cs-settings-row">
                     <label class="cs-settings-label" for="cs-set-prompt-detail">${escapeHtml(csT("Prompt detail"))}</label>
@@ -24402,6 +25062,7 @@ function openSettingsOverlay() {
             promptDetail: overlay.querySelector("#cs-set-prompt-detail")?.value === "maximum" ? "maximum" : "standard",
             promptLayout: overlay.querySelector("#cs-set-prompt-layout")?.value === "classic" ? "classic" : "split",
             toolSet: overlay.querySelector("#cs-set-tool-set")?.value === "full" ? "full" : "lean",
+            uiMode: overlay.querySelector("#cs-set-ui-mode")?.value === "simple" ? "simple" : "advanced",
             modelHealth: Boolean(overlay.querySelector("#cs-set-model-health")?.checked),
             hudEnabled: Boolean(overlay.querySelector("#cs-set-hud")?.checked),
             uiLanguage: uiLanguage === "en" || uiLanguage === "vi" ? uiLanguage : "auto",
@@ -24494,6 +25155,7 @@ function openSettingsOverlay() {
    label, re-render visible cards, refresh an open sheet. Shared by Save and
    (v3.1.1) configuration import. */
 function applySettingsToUi() {
+    applyUiModeClass();
     document.getElementById("character-state-button")?.remove();
     document.getElementById("cs-extensions-menu-entry")?.remove();
     createButton();
@@ -26829,6 +27491,10 @@ setTimeout(async () => {
     await ensureAllGroupCharacterStates();
     createButton();
 }, 1000);
+
+/* v3.5.0: write the Simple / Advanced default once, then mark <body> */
+ensureUiModeSetting();
+applyUiModeClass();
 
 registerCsSlashCommand();
 

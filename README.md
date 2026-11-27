@@ -57,6 +57,7 @@ You play the story. The extension keeps the ledger.
 - 🩹 **Self-healing protocol** — truncated output, malformed JSON, hallucinated tags, forgotten closing tags: recovered, repaired, or rejected with a lesson for the model — never silently applied.
 - 🧠 **Token-smart** — compact state views, lazy group summaries, lean on-demand reads. Big sheets stay affordable.
 - 📱 **Clean on desktop and phone** — tabbed sheet, a six-button header, stat filter, tap-for-details rows, full-screen on phones, Esc to close, English / Tiếng Việt interface.
+- 🌱 **Easy start** — a Simple mode for new players (expert controls hidden, nothing switched off) and **Story Setup**: pick a genre and give everyone in the chat a sheet in three steps, without touching the card.
 - 🧭 **Play-friendly** — quick ± adjust and ★ pins with a HUD above the chat input, a relations tab, a real clock editor (day/hour, sleep, pause, calendar), one History screen, configuration export/import, and a *Maximum* prompt mode for the smartest AI.
 - 🎛 **Yours to shape** — built-in presets for 10 genres (fantasy, system, cultivation, survival, romance…), your own presets, reusable components, per-field copy/paste across characters, custom display modes, hidden fields.
 

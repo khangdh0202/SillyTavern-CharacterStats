@@ -52,8 +52,9 @@ There are **two layers** of data, and understanding them explains 90% of how the
 
 1. Install: in SillyTavern open the **Extensions** panel → click **Install extension**, paste `https://github.com/khangdh0202/SillyTavern-CharacterStats` and install (for this user or for all users). Manual alternative: copy the repo into `data/<user-handle>/extensions/` or `public/scripts/extensions/third-party/`, then reload SillyTavern.
 2. Open any chat. A sheet button appears above the input box.
-3. If your card has no sheet yet, either build one in the editor (**Edit ▸ Edit the card defaults (new chats)**), or use the AI Sheet Designer (section 14).
-4. Play. The AI now reads the state every turn and keeps it updated — every applied change appears as a small card in the chat.
+3. New story? Open the sheet and pick **Story Setup** (offered once in a chat without sheets, always in **World ▾**). Choose a genre, choose which sheet {{user}}, the character(s) and the side NPCs get (or keep / skip), review, and press **Start**. It writes this chat only: no Character Card and no setting is changed, and a snapshot is taken first so you can undo it.
+4. Or, if your card has no sheet yet, build one in the editor (**Edit ▸ Edit the card defaults (new chats)**), or use the AI Sheet Designer (section 14).
+5. Play. The AI now reads the state every turn and keeps it updated — every applied change appears as a small card in the chat.
 
 ## 3. The sheet interface
 
@@ -64,8 +65,8 @@ Open the sheet with the **Character Sheet** button above the input box, the entr
 | 🕐 clock | Game clock: view, adjust manually, pause |
 | **Edit ▾** | *This chat's state* (values, definitions, skills, items, custom text) or *Card defaults* (new chats; the current chat is not modified) |
 | **History ▾** | Change log (JSON/CSV export), timeline, snapshots, take a snapshot now |
-| **World ▾** | World overview, scenes, add a side NPC, create the {{user}} sheet (once) |
-| **⋯** | Copy / paste schema, presets, components · save this chat as the card defaults, reset this chat from the card, fold Mod into Base · token estimate · settings |
+| **World ▾** | Story Setup, world overview, scenes, add a side NPC, create the {{user}} sheet (once) |
+| **⋯** | Copy / paste schema, presets, components · save this chat as the card defaults, reset this chat from the card, fold Mod into Base · token estimate · Simple / Advanced switch · settings |
 | ✕ | Close (or press **Esc**) |
 
 The content is split into tabs with counts: **Stats · Effects · Skills · Inventory · Relations · Custom**.
@@ -80,6 +81,8 @@ The content is split into tabs with counts: **Stats · Effects · Skills · Inve
 Inside the **edit mode** you get the same tabs (except Effects and Relations) plus: add / edit / delete individual stats, **🗑 Clear All** (removes every stat row — then press **Save** to keep), drag-and-drop ordering (☷), insert above/below (⤒/⤓), ▣ Select for multi-field copy. Leaving with unsaved input (Esc or a click outside) asks first.
 
 On a phone the sheet is full-screen, menus open as bottom sheets and editor rows stack vertically.
+
+**Simple and Advanced.** A new install starts in **Simple**, which hides the expert controls: card editing and every card write, schema / field copy and paste, components, triggers and custom sync in the stat form, field meta, scenes, the Relations tab, the change log and timeline, the token estimate, recovery and the Mod→Base fold tools. Everything else stays: the sheet tabs, ✎ editing this chat, quick adjust and ★ pins, the HUD, the clock, event cards, the model health light, Story Setup, presets, snapshots and settings. Nothing is switched off: triggers, scenes and relations already in a chat keep working, and the sheet says so in one line. Switch with **⋯ ▸ Switch to Advanced mode** (or the link in the sheet footer) or in Settings. If you used Character State before 3.5.0, you stay in Advanced.
 
 ## 4. Stats in depth
 
@@ -268,6 +271,7 @@ Number stats get a sparkline on the sheet; clicking it opens a larger chart (gri
 | Setting | Default | What it does |
 | --- | --- | --- |
 | Interface language | English | Auto (follows SillyTavern) / English / Tiếng Việt |
+| **Interface** | Simple (new install) / Advanced (existing user) | **Simple** hides the expert controls (section 3); **Advanced** shows everything. Nothing is switched off in either mode |
 | **Prompt detail** | Standard | **Maximum** shows the model up to 40,000 characters of custom data (Standard: 8,000) and always sends every group member in full — the smartest option when input tokens are not a concern |
 | **Prompt layout** | Split | **Split** keeps the rules and stat definitions at the start of the prompt, unchanged between turns (providers can cache them), and sends the current values (stats, skills, inventory, effects, custom data, game time) as a small block at the end of the chat. Nothing is left out. **Classic** sends everything as one block at the start, as before 3.3.0. Group chats always use Classic |
 | **Tool set** | Lean | **Lean** does not offer the older `UpdateCharacterState` tool, which `state_update` fully covers, so every request carries one tool fewer. **Full** offers every tool, as before 3.4.0 |
